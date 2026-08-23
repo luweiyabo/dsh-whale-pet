@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私密安全报告
+    url: https://github.com/luweiyabo/dsh-whale-pet/security/advisories/new
+    about: 请勿通过公开 Issue 披露尚未修复的安全漏洞。
+  - name: DeepSeek Harness 上游
+    url: https://github.com/deepseek-ai/deepseek-harness
+    about: DSH 本体问题请提交到上游项目。

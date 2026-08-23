@@ -1,0 +1,30 @@
+name: 功能建议
+description: 提议新的交互、动作、设置或兼容性改进
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 这个功能希望解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 请描述期望的行为和交互。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 是否考虑过其他实现或临时解决方式？
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 可附参考图片、动画或相关链接，并说明资源授权。

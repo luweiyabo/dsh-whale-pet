@@ -10,7 +10,7 @@ Bring the whale girl into DeepSeek Harness: react to agent activity, respond to 
 [![npm downloads](https://img.shields.io/npm/dm/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=downloads)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
 [![GitHub stars](https://img.shields.io/github/stars/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/issues)
-[![License](https://img.shields.io/github/license/luweiyabo/dsh-whale-pet?style=flat-square)](./LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20code%20%2B%20non--commercial%20assets-blue?style=flat-square)](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-Web-2f81f7?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
 
 [中文](./README.md) · [Preview](#preview) · [Install](#installation) · [Usage](#usage) · [Features](#features) · [Development](#development) · [Issues](https://github.com/luweiyabo/dsh-whale-pet/issues)
@@ -125,7 +125,7 @@ The project uses DSH's split host/client plugin architecture:
 - `materials/videos/`: AI-generated source MP4 files for traceability and reprocessing, not runtime playback
 - `materials/prompts/`: animation-generation prompts
 
-Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whale-pet/issues) and [pull requests](https://github.com/luweiyabo/dsh-whale-pet/pulls). Run the tests before submitting and never commit API keys or private configuration.
+Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whale-pet/issues) and [pull requests](https://github.com/luweiyabo/dsh-whale-pet/pulls). Read the [contribution guide](./CONTRIBUTING.md) first, report security issues privately under the [security policy](./SECURITY.md), and review version changes in the [changelog](./CHANGELOG.md).
 
 ## Usage
 

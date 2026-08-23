@@ -10,7 +10,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=downloads)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
 [![GitHub stars](https://img.shields.io/github/stars/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/issues)
-[![License](https://img.shields.io/github/license/luweiyabo/dsh-whale-pet?style=flat-square)](./LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20code%20%2B%20non--commercial%20assets-blue?style=flat-square)](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-Web-2f81f7?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
 
 [English](./README_EN.md) · [预览](#功能预览) · [安装](#安装) · [使用](#如何使用) · [功能](#功能说明) · [动作](#动作展示) · [配置](#配置与数据) · [问题反馈](https://github.com/luweiyabo/dsh-whale-pet/issues)
@@ -308,7 +308,7 @@ npm pack --dry-run
 - `materials/videos/`：AI 生成的源 MP4（仅用于溯源和再处理，不参与运行时播放）
 - `materials/prompts/`：动画生成提示词
 
-欢迎提交 [Issue](https://github.com/luweiyabo/dsh-whale-pet/issues) 或 [Pull Request](https://github.com/luweiyabo/dsh-whale-pet/pulls)。提交前请确认测试通过，并避免把 API Key、私有配置或大体积源视频提交到仓库。
+欢迎提交 [Issue](https://github.com/luweiyabo/dsh-whale-pet/issues) 或 [Pull Request](https://github.com/luweiyabo/dsh-whale-pet/pulls)。参与前请阅读 [贡献指南](./CONTRIBUTING.md)；安全问题请按照 [安全策略](./SECURITY.md) 私密报告；版本变化见 [更新日志](./CHANGELOG.md)。
 
 ## 如何使用
 
