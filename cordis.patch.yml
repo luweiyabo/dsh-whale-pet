@@ -1,0 +1,29 @@
+# ============================================================================
+# dsh-whale-pet 的 bundle patch —— 把桌宠插件挂进 DSH 配置树
+# ============================================================================
+#
+# 【这是什么】
+#   这是 dsh-whale-pet 的"挂载声明"。DSH 启动时按 bundle 层栈把各个插件的
+#   patch 叠起来组成配置树，本文件就是本插件这一层的内容。
+#
+# 【工作原理】
+#   - insert：向配置树里添加新的插件行（entry）
+#   - id 是行标识（patch 覆盖时按它定位），name 是插件模块名
+#   - name: '@luweiyabo/dsh-whale-pet' 解析到包入口 lib/index.js（宿主半侧）
+#   - 因为 package.json 声明了 dsh.client，DSH 的模块系统同时会把该包扫描为
+#     浏览器插件，提供 /plugins/@luweiyabo/dsh-whale-pet/client.js 给页面
+#
+# 【config 说明】
+#   这里的 config 会传给宿主半侧 apply(ctx, config)，并作为 settings 命名空间
+#   'whale-pet' 的 base 层注册（lib/index.js 的 ctx.settings.register）——因此
+#   size/position 会随 settings.describe 下发到浏览器侧，作为用户设置之下、
+#   代码默认值之上的默认值。优先级：代码默认 < patch(base) < 用户设置。
+#
+# ============================================================================
+
+- insert:
+    - id: whale-pet              # 插件行 id（唯一，与已装的 dsh-pet 行 'pet' 区分）
+      name: '@luweiyabo/dsh-whale-pet' # npm 包全名：解析到 lib/index.js
+      config:
+        size: 462                # 舞台宽度（px），高 = 宽×9/16 ≈ 260px
+        position: bottom-right   # 默认角落：bottom-right | bottom-left | top-right | top-left

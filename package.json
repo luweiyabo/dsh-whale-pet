@@ -1,0 +1,77 @@
+{
+  "name": "@luweiyabo/dsh-whale-pet",
+  "version": "0.1.1",
+  "description": "A floating whale desktop pet for the DeepSeek Harness Web UI: 94 categorized animations, event-aware actions, custom uploads, click reactions, dragging and screen wandering.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "desktop-pet",
+    "pet",
+    "whale",
+    "floating-widget",
+    "web-ui",
+    "cordis",
+    "react"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/balance-providers.js && node --check lib/deepseek-balance.js",
+    "test": "node --test",
+    "prepublishOnly": "npm run check && npm test"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "assets",
+    "cordis.patch.yml",
+    "README_EN.md",
+    "THIRD_PARTY_ASSETS.md",
+    "THIRD_PARTY_ASSETS_EN.md"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "luweiyabo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luweiyabo/dsh-whale-pet.git"
+  },
+  "homepage": "https://github.com/luweiyabo/dsh-whale-pet#readme",
+  "bugs": {
+    "url": "https://github.com/luweiyabo/dsh-whale-pet/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}
