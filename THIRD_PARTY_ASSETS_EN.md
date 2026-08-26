@@ -1,10 +1,10 @@
 # Third-party Asset Notice
 
-[中文](./THIRD_PARTY_ASSETS.md)
+[中文](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS.md)
 
 ## Scope
 
-The original source code in this project is licensed under the MIT License in the repository-root [LICENSE](./LICENSE).
+The original source code in this project is licensed under the MIT License in the repository-root [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE).
 That MIT License does not apply to animation media under `assets/thumb/` that was obtained from the upstream project.
 The directory also contains animations created by this project; the upstream asset terms described here apply only to assets actually sourced from upstream.
 

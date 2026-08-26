@@ -19,12 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-Third-party assets
-------------------
-
-The MIT License above applies only to the original source code of this
-project. Most animation assets under assets/thumb/ are third-party works and
-are not relicensed under the MIT License by this project. Assets actually
-sourced from the upstream project are governed by its separate terms described
-in THIRD_PARTY_ASSETS_EN.md (English) and THIRD_PARTY_ASSETS.md (Chinese).

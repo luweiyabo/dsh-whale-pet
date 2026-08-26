@@ -10,16 +10,16 @@
 [![npm downloads](https://img.shields.io/npm/dm/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=downloads)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
 [![GitHub stars](https://img.shields.io/github/stars/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/issues)
-[![License](https://img.shields.io/badge/license-MIT%20code%20%2B%20non--commercial%20assets-blue?style=flat-square)](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-Web-2f81f7?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
 
-[English](./README_EN.md) · [预览](#功能预览) · [安装](#安装) · [使用](#如何使用) · [功能](#功能说明) · [动作](#动作展示) · [配置](#配置与数据) · [问题反馈](https://github.com/luweiyabo/dsh-whale-pet/issues)
+[English](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README_EN.md) · [预览](#功能预览) · [安装](#安装) · [使用](#如何使用) · [功能](#功能说明) · [动作](#动作展示) · [配置](#配置与数据) · [问题反馈](https://github.com/luweiyabo/dsh-whale-pet/issues)
 
 </div>
 
 dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI 的开源鲸鱼桌宠插件。它会根据 Agent 的思考、编码、工具调用、等待和错误等状态自动切换动作，也支持点击回应、拖拽、屏幕漫游、自定义动画和触发规则。
 
-插件包含 **94 个 640×360 透明 WebM 动画**，提供中英文界面，设置修改后自动保存并热生效。
+插件包含 **95 个 640×360 透明 WebM 动画**，提供中英文界面，设置修改后自动保存并热生效。
 
 ## 功能预览
 
@@ -34,7 +34,6 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
     <td colspan="2" align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/custom-actions-and-rules.png" width="680" alt="自定义动作和事件触发规则"><br><strong>自定义动作与触发规则</strong></td>
   </tr>
 </table>
-
 ### 桌面交互与状态信息
 
 <table>
@@ -50,7 +49,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 
 ## 动作展示
 
-以下按运行时分类展示全部 **16 个分类、94 个动作**。预览为 240×135、5 FPS 的低帧率循环 GIF；将鼠标悬停在图片上可查看中文动作名。
+以下按运行时分类展示全部 **16 个分类、95 个动作**。预览为 240×135、5 FPS 的低帧率循环 GIF；将鼠标悬停在图片上可查看中文动作名。
 
 ### 待机（1）
 
@@ -84,10 +83,11 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
   <img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/actions/clicks/arrival_wave.gif" width="160" alt="原地挥手打招呼" title="原地挥手打招呼">
 </p>
 
-### 拖拽（1）
+### 拖拽（2）
 
 <p>
   <img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/actions/drag/dragged_in_midair.gif" width="160" alt="被鼠标拖拽悬空反馈" title="被鼠标拖拽悬空反馈">
+  <img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/actions/drag/turn_into_ball.gif" width="160" alt="快速甩出后变成球" title="快速甩出后变成球">
 </p>
 
 ### 日常（10）
@@ -230,9 +230,11 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 
 ### 环境要求
 
-- 已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- `pnpm` 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm
-- 使用 Web profile
+| 项目 | 要求 |
+|---|---|
+| DeepSeek Harness | `>= 0.1.0-rc.6`（开发者预览版；Web profile） |
+| Node.js | `^22.19.0 \|\| >=24.0.0`（跟随 DSH 官方要求，见 DSH `package.json` 的 `engines.node`） |
+| pnpm | 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm |
 
 ### 从 npm 安装
 
@@ -297,18 +299,18 @@ npm pack --dry-run
 
 项目采用 DSH 双半侧插件结构：
 
-- `lib/index.js`：宿主侧设置、静态动画、自定义动作和余额 API
-- `lib/client.js`：浏览器侧播放、交互、意图仲裁和设置界面
-- `cordis.patch.yml`：DSH bundle 挂载声明
-- `assets/plugin-logo.png`：插件 Logo
-- `assets/thumb/`：内置透明动画
-- `docs/images/screenshots/`：README 功能预览截图
-- `docs/images/actions/`：94 个动作的低帧率循环 GIF
-- `materials/references/`：角色首帧与视觉参考图
-- `materials/videos/`：AI 生成的源 MP4（仅用于溯源和再处理，不参与运行时播放）
-- `materials/prompts/`：动画生成提示词
+- [`lib/index.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/index.js)：宿主侧设置、静态动画、自定义动作和余额 API
+- [`lib/client.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/client.js)：浏览器侧播放、交互、意图仲裁和设置界面
+- [`cordis.patch.yml`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/cordis.patch.yml)：DSH bundle 挂载声明
+- [`assets/plugin-logo.png`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/assets/plugin-logo.png)：插件 Logo
+- [`assets/thumb/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/assets/thumb)：内置透明动画
+- [`docs/images/screenshots/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/docs/images/screenshots)：README 功能预览截图
+- [`docs/images/actions/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/docs/images/actions)：95 个动作的低帧率循环 GIF
+- [`materials/references/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/materials/references)：角色首帧与视觉参考图
+- [`materials/videos/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/materials/videos)：AI 生成的源 MP4（仅用于溯源和再处理，不参与运行时播放）
+- [`materials/prompts/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/materials/prompts)：动画生成提示词
 
-欢迎提交 [Issue](https://github.com/luweiyabo/dsh-whale-pet/issues) 或 [Pull Request](https://github.com/luweiyabo/dsh-whale-pet/pulls)。参与前请阅读 [贡献指南](./CONTRIBUTING.md)；安全问题请按照 [安全策略](./SECURITY.md) 私密报告；版本变化见 [更新日志](./CHANGELOG.md)。
+欢迎提交 [Issue](https://github.com/luweiyabo/dsh-whale-pet/issues) 或 [Pull Request](https://github.com/luweiyabo/dsh-whale-pet/pulls)。提交前请确认测试通过，并避免把 API Key、私有配置或大体积源视频提交到仓库。
 
 ## 如何使用
 
@@ -317,9 +319,10 @@ npm pack --dry-run
 | 操作 | 效果 |
 |---|---|
 | 悬停 | 宠物朝向光标所在一侧，移开后恢复原朝向；拖拽或惯性滑行期间不生效 |
-| 单击宠物 | 根据头部、身体或尾部区域播放不同回应，并切换选中状态；选中后点击页面可让宠物前往目标位置 |
+| 悬停（动效） | 光标靠近时宠物轻微倾向光标，可在设置中关闭 |
+| 单击宠物 | 根据头部、身体或尾部区域播放不同回应，并切换选中状态；开启交互动效时会同时触发一次 Q 弹压缩回弹；选中后点击页面可让宠物前往目标位置 |
 | 双击宠物 | 播放“蓝鲸现世”特殊动画并取消选中状态 |
-| 拖拽 | 移动并放置宠物；快速甩动后会惯性滑行，系统启用“减少动态效果”时不滑行 |
+| 拖拽与反弹 | 移动并放置宠物；拖动时按速度产生挤压拉伸形变，快速甩动后会从球形帧开始播放“变成球”动画并惯性滑行；人物边界触碰屏幕时反弹，开启交互动效时碰撞会产生 Q 弹挤压；系统启用“减少动态效果”时不滑行 |
 | 完全拖出屏幕 | 宠物进入边缘隐藏状态；将指针移到对应屏幕边缘可露出召回区域 |
 | 右键宠物 | 打开快捷菜单：回家、打开设置或隐藏 |
 
@@ -328,6 +331,7 @@ npm pack --dry-run
 进入 **设置 → 插件 → 鲸鱼桌宠**，可以调整：
 
 - 显示、文字气泡和账户余额气泡
+- 交互动效（光标倾斜跟随、点击弹跳、拖拽挤压）
 - 宠物尺寸、默认角落和会话感知范围
 - 安静、均衡、活泼三档自主活跃程度
 - 工作、编码、阅读、搜索、思考、等待、倾听和错误等意图对应的动作
@@ -362,6 +366,7 @@ npm pack --dry-run
 - 行走方向与动画朝向同步，并自动检测可用空间
 - 位置按窗口比例保存，窗口缩放后仍保持相对位置
 - 双缓冲视频交叉淡入，减少动作切换时的空白帧
+- 交互动效层：光标倾斜跟随（rAF 弹簧）、点击弹跳、拖拽挤压拉伸与滑行/反弹 Q 弹形变，可整体关闭
 - 支持系统 `prefers-reduced-motion` 设置
 
 ### 自定义触发规则
@@ -448,9 +453,9 @@ $DSH_HOME/whale-pet/actions/
 
 ## 资源来源与许可
 
-- 本项目原创代码使用 [MIT License](./LICENSE)
-- `assets/thumb/` 中的大部分动画资源来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，不属于本项目的 MIT 代码授权
-- 上游目前允许这些动画资源用于开源项目，但禁止商业使用；使用、再分发或改编前请阅读 [第三方资源许可说明](./THIRD_PARTY_ASSETS.md) 并核对上游最新条款
-- 因 npm 包同时包含 MIT 代码和受单独条款约束的媒体资源，包的许可字段为 `SEE LICENSE IN LICENSE`，不能把整个 npm 包视为纯 MIT 授权
+- 本项目原创代码使用 [MIT License](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
+- [`assets/thumb/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/assets/thumb) 中的大部分动画资源来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，不属于本项目的 MIT 代码授权
+- 上游目前允许这些动画资源用于开源项目，但禁止商业使用；使用、再分发或改编前请阅读 [第三方资源许可说明](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS.md) 并核对上游最新条款
+- 因 npm 包同时包含 MIT 代码和受单独条款约束的媒体资源，包的许可字段为 `SEE LICENSE IN LICENSE` 而非单纯的 `MIT`；根目录 [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)（标准 MIT）仅覆盖原创代码，媒体资源条款见随包分发的 [第三方资源许可说明](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS.md)，不能把整个 npm 包视为纯 MIT 授权
 
 本项目与 DeepSeek 官方无隶属关系，是面向 DeepSeek Harness 的社区开源插件。

@@ -1,10 +1,10 @@
 # 第三方资源许可说明
 
-[English](./THIRD_PARTY_ASSETS_EN.md)
+[English](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS_EN.md)
 
 ## 适用范围
 
-本项目的原创源代码使用仓库根目录 [LICENSE](./LICENSE) 中的 MIT License。
+本项目的原创源代码使用仓库根目录 [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE) 中的 MIT License。
 该 MIT 授权不适用于 `assets/thumb/` 中实际从上游项目取得的动画媒体资源。
 该目录也包含本项目制作的动画；本说明中的上游资源条款仅适用于取自上游的部分。
 
@@ -27,3 +27,6 @@
 
 如需商业使用，请在使用前联系上游权利人取得明确授权。若不接受上述媒体资源条款，
 请勿复制、分发或使用 `assets/thumb/` 中的动画文件。
+
+本包为混合授权：原创源代码以 MIT License 授权，而 `assets/thumb/` 中的大部分动画
+来自上游项目，受单独的禁商用资源条款约束。该条款仅适用于实际取自上游项目的动画。

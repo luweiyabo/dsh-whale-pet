@@ -1,0 +1,6 @@
+assets/
+docs/
+materials/
+node_modules/
+package-lock.json
+*.md
