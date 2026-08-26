@@ -43,5 +43,6 @@
 - 提供 94 个分类动画、Agent 状态感知、点击与拖拽交互、屏幕漫游、自定义动作、触发规则和余额气泡。
 - 已知问题：scoped npm 包安装后，浏览器端模块注册名不匹配；已在 `0.1.1` 修复。
 
+[0.1.2]: https://github.com/luweiyabo/dsh-whale-pet/releases/tag/v0.1.2
 [0.1.1]: https://github.com/luweiyabo/dsh-whale-pet/releases/tag/v0.1.1
 [0.1.0]: https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet/v/0.1.0
