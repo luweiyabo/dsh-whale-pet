@@ -12,6 +12,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/issues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-Web-2f81f7?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
 [English](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README_EN.md) · [预览](#功能预览) · [安装](#安装) · [使用](#如何使用) · [功能](#功能说明) · [动作](#动作展示) · [配置](#配置与数据) · [问题反馈](https://github.com/luweiyabo/dsh-whale-pet/issues)
 
@@ -232,9 +233,11 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 
 | 项目 | 要求 |
 |---|---|
-| DeepSeek Harness | `>= 0.1.0-rc.6`（开发者预览版；Web profile） |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1`（开发者预览版；Web profile） |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（跟随 DSH 官方要求，见 DSH `package.json` 的 `engines.node`） |
 | pnpm | 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm |
+
+已适配 DSH `0.1.2-rc.1` 的配置 RPC、会话事件订阅、模型选择、审批与问答等待状态，并保留旧版 `connection.api`。新版从会话服务读取当前会话；断线后重建状态时不会把历史消息当作新事件触发规则。余额仍仅查询服务商官方接口，未配置凭据时会显示查询失败。
 
 ### 从 npm 安装
 
@@ -285,6 +288,8 @@ dsh plugin --profile web remove @luweiyabo/dsh-whale-pet
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
 cd dsh-whale-pet
+npm ci
+npm run build
 dsh plugin --profile web add .
 dsh web
 ```
@@ -293,6 +298,7 @@ dsh web
 
 ```sh
 npm run check
+npm run format:check
 npm test
 npm pack --dry-run
 ```

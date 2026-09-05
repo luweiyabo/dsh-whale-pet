@@ -12,6 +12,7 @@ Bring the whale girl into DeepSeek Harness: react to agent activity, respond to 
 [![GitHub issues](https://img.shields.io/github/issues/luweiyabo/dsh-whale-pet?style=flat-square&logo=github)](https://github.com/luweiyabo/dsh-whale-pet/issues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-Web-2f81f7?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
 [中文](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README.md) · [Preview](#preview) · [Install](#installation) · [Usage](#usage) · [Features](#features) · [Development](#development) · [Issues](https://github.com/luweiyabo/dsh-whale-pet/issues)
 
@@ -56,9 +57,11 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 
 | Item | Requirement |
 |---|---|
-| DeepSeek Harness | `>= 0.1.0-rc.6` (developer preview; Web profile) |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1` (developer preview; Web profile) |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
+
+Supports DSH `0.1.2-rc.1` configuration RPC, session events, model selection, and pending approvals/questions while retaining the legacy `connection.api` path. The new adapter reads the current session from the host service and restores state after reconnecting without firing rules for historical messages. Balances still come from official provider endpoints; missing credentials produce a query failure.
 
 ### Install from npm
 
@@ -102,6 +105,8 @@ Restart `dsh web` after uninstalling. User-uploaded actions remain in `$DSH_HOME
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
 cd dsh-whale-pet
+npm ci
+npm run build
 dsh plugin --profile web add .
 dsh web
 ```
@@ -110,6 +115,7 @@ Run tests and inspect the npm package contents:
 
 ```sh
 npm run check
+npm run format:check
 npm test
 npm pack --dry-run
 ```

@@ -19,9 +19,11 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/balance-providers.js && node --check lib/deepseek-balance.js",
-    "format": "prettier --write lib test",
-    "format:check": "prettier --check lib test",
+    "build": "node scripts/build-client.mjs",
+    "build:check": "node scripts/build-client.mjs --check",
+    "check": "npm run build:check && node --check lib/index.js && node --check lib/client.js && node --check lib/balance-providers.js && node --check lib/deepseek-balance.js",
+    "format": "prettier --write src scripts lib test",
+    "format:check": "prettier --check src scripts lib test",
     "test": "node --test",
     "prepublishOnly": "npm run check && npm run format:check && npm test"
   },
@@ -55,7 +57,7 @@
   },
   "dsh": {
     "compatibility": {
-      "dsh": "^0.1.0-rc.6",
+      "dsh": "^0.1.0-rc.6 || ^0.1.2-rc.1",
       "node": "^22.19.0 || >=24.0.0",
       "platform": "web",
       "externalCredentials": "optional"
@@ -74,16 +76,17 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6 || ^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6 || ^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6 || ^0.1.2-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6 || ^0.1.2-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6 || ^0.1.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0"
   },
   "devDependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
+    "esbuild": "0.28.2",
     "prettier": "^3.9.6"
   }
 }
