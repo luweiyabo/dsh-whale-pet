@@ -35,6 +35,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
     <td colspan="2" align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/custom-actions-and-rules.png" width="680" alt="自定义动作和事件触发规则"><br><strong>自定义动作与触发规则</strong></td>
   </tr>
 </table>
+
 ### 桌面交互与状态信息
 
 <table>
