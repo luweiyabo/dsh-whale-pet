@@ -11,9 +11,13 @@ permissions:
 
 jobs:
   test:
-    name: Node.js 24 发布检查
+    name: Node.js ${{ matrix.node }} 发布检查
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24]
 
     steps:
       - name: 检出代码
@@ -22,7 +26,7 @@ jobs:
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: 安装依赖
@@ -30,6 +34,9 @@ jobs:
 
       - name: 检查语法
         run: npm run check
+
+      - name: 检查格式
+        run: npm run format:check
 
       - name: 运行测试
         run: npm test

@@ -2,6 +2,21 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.3] - 2026-10-03
+
+### 新增
+
+- 适配 DSH `0.1.2-rc.1` 的配置 RPC、`remote.session` 会话事件、模型投影以及审批与问答等待状态。
+- 断线重连时从权威快照恢复当前状态，同时避免将历史事件作为新事件触发规则。
+- 新增对 DSH `0.2.0-rc.2` 的支持：设置读写改走 typert Remote 子服务 `remote.settings`，会话活动改由 `uiSession.sessionStatus` / `uiSession.current` / `remote.session` 提供，设置页适配官方插件页（`plugins.row.config`），模型流式输出经 `assistant-stream` 归一化处理。
+
+### 改进
+
+- 保留旧版 `connection.api` 降级路径。
+- 补充新版宿主适配层的配置、模型、事件、交互状态和重连契约测试。
+- 明确 DSH `0.1.3-alpha.1` 尚未验证，不在当前兼容范围内。
+- 保留 DSH `0.1.x` 兼容：按运行时特性探测在旧/新宿主间分流，`0.1.x` 与 `0.2.0` 行为一致；兼容范围扩展为 `^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2`，插件版本仍在 `0.1.x`。
+
 ## [0.1.2] - 2026-08-26
 
 ### 新增
@@ -44,5 +59,6 @@
 - 已知问题：scoped npm 包安装后，浏览器端模块注册名不匹配；已在 `0.1.1` 修复。
 
 [0.1.2]: https://github.com/luweiyabo/dsh-whale-pet/releases/tag/v0.1.2
+[0.1.3]: https://github.com/luweiyabo/dsh-whale-pet/releases/tag/v0.1.3
 [0.1.1]: https://github.com/luweiyabo/dsh-whale-pet/releases/tag/v0.1.1
 [0.1.0]: https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet/v/0.1.0

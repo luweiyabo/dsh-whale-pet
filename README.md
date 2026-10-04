@@ -234,11 +234,11 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 
 | 项目 | 要求 |
 |---|---|
-| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1`（开发者预览版；Web profile） |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2`（开发者预览版；Web profile） |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（跟随 DSH 官方要求，见 DSH `package.json` 的 `engines.node`） |
 | pnpm | 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm |
 
-已适配 DSH `0.1.2-rc.1` 的配置 RPC、会话事件订阅、模型选择、审批与问答等待状态，并保留旧版 `connection.api`。新版从会话服务读取当前会话；断线后重建状态时不会把历史消息当作新事件触发规则。余额仍仅查询服务商官方接口，未配置凭据时会显示查询失败。
+插件 `0.1.3` 在保留 DSH `0.1.x` 兼容的同时，新增对 DSH `0.2.0-rc.2` 的支持：`0.1.x` 沿用 `connection.api` / `connection.rpc`，`0.2.0-rc.2` 的设置读写改走 typert Remote 子服务 `remote.settings`，会话活动改由 `uiSession.sessionStatus` 提供，模型流式输出经 `assistant-stream` 帧归一化，设置卡片同时适配官方插件页槽位 `plugins.row.config`。会话事件订阅、模型选择、审批与问答等待状态在两种宿主上行为一致；断线后重建状态时不会把历史消息当作新事件触发规则。余额仍仅查询服务商官方接口，未配置凭据时会显示查询失败。
 
 ### 从 npm 安装
 
@@ -285,6 +285,8 @@ dsh plugin --profile web remove @luweiyabo/dsh-whale-pet
 卸载后重新启动 `dsh web`。用户上传的动作保存在 `$DSH_HOME/whale-pet/actions/`，卸载插件不会自动删除这些文件。
 
 ## 开发
+
+客户端源码位于 `src/client/`：`animations.js` 管理动画目录，`activity.js` 管理事件、规则与仲裁，`index.js` 保留界面与播放器。修改源码后运行 `npm run build`，同时提交生成的 `lib/client.js`；`npm run check` 会校验产物与源码一致。React 仍由 DSH 宿主提供。
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git

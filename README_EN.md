@@ -57,11 +57,11 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 
 | Item | Requirement |
 |---|---|
-| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1` (developer preview; Web profile) |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2` (developer preview; Web profile) |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-Supports DSH `0.1.2-rc.1` configuration RPC, session events, model selection, and pending approvals/questions while retaining the legacy `connection.api` path. The new adapter reads the current session from the host service and restores state after reconnecting without firing rules for historical messages. Balances still come from official provider endpoints; missing credentials produce a query failure.
+Plugin `0.1.3` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2`: `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances still come from official provider endpoints; missing credentials produce a query failure.
 
 ### Install from npm
 
@@ -101,6 +101,8 @@ dsh plugin --profile web remove @luweiyabo/dsh-whale-pet
 Restart `dsh web` after uninstalling. User-uploaded actions remain in `$DSH_HOME/whale-pet/actions/` and are not removed automatically.
 
 ## Development
+
+Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, and `index.js` owns the UI and player. Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH.
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
