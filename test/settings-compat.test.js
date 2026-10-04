@@ -73,6 +73,13 @@ function loadClient() {
     runInNewContext(bundle, {
         window: { __ModuleLoader__: { load: (value) => (definition = value) } },
         fetch: async () => ({ json: async () => ({ ok: true, actions: [] }) }),
+        // 0.2.0 适配层的惰性轮询在无宿主环境下应保持 pending；给出 no-op 定时器，
+        // 避免 vm 沙箱缺失 setTimeout 触发的 ReferenceError。
+        setTimeout: () => 0,
+        clearTimeout: () => {},
+        setInterval: () => 0,
+        clearInterval: () => {},
+        console: { error: () => {}, warn: () => {}, log: () => {} },
     });
     const plugin = definition.factory((id) => {
         if (id === 'react') return react;
@@ -120,12 +127,20 @@ test('鲸鱼卡片在官方默认卡片之后，与注册先后无关', () => {
         if (!whaleFirst) official();
         loadClient().plugin.apply(
             {
-                get: () => undefined,
+                // 0.2.0 的 apply 会等待 sessions/remote/uiSession 就绪后立即挂载；
+                // 这里提供桩服务，令其同步路径生效（本用例只关心槽位注册顺序）。
+                get: (name) => (['sessions', 'remote', 'uiSession'].includes(name) ? {} : undefined),
                 slots: {
                     register: (...args) => slots.register(...args),
                     inject(_name, register) {
-                        for (const _dispose of register()) {
-                            /* 执行注册生成器。 */
+                        // 真实 SlotCore.inject 只会为「已声明」的槽执行注册生成器；
+                        // 未声明的槽（如 0.2.0 的 plugins.row.config）应被忽略。
+                        try {
+                            for (const _dispose of register()) {
+                                /* 执行注册生成器。 */
+                            }
+                        } catch (error) {
+                            if (!/is not declared/.test(String(error && error.message))) throw error;
                         }
                     },
                 },

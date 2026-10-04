@@ -4078,6 +4078,7 @@ window.__ModuleLoader__.load({
             custom,
             ruleUi,
             t,
+            bare = false,
         }) {
             var behavior = draft.behavior || {};
             var customIds = custom && Array.isArray(custom.ids) ? custom.ids : [];
@@ -4497,6 +4498,46 @@ window.__ModuleLoader__.load({
                 ],
             });
 
+            var bodyContent = [
+                panel(t('secParams'), null, paramsContent),
+                panel(
+                    t('secIntents'),
+                    null,
+                    h('div', { className: 'wp-sf-fieldGrid', children: intentRows })
+                ),
+                panel(
+                    t('secPools'),
+                    null,
+                    h('div', {
+                        className: 'wp-sf-fieldGrid wp-sf-fieldGridPools',
+                        children: poolRows,
+                    })
+                ),
+                panel(t('secCustom'), t('hintCustomCategory'), customContent),
+                panel(
+                    t('secRules'),
+                    t('hintRules'),
+                    h(RulesSection, {
+                        rules: draft.rules || [],
+                        onPatch,
+                        t,
+                        options: ALL_ANIMS.concat(customIds),
+                        ruleUi,
+                    })
+                ),
+                error &&
+                    h('div', {
+                        className: 'wp-sf-footer',
+                        children: [h('p', { className: 'wp-sf-error', role: 'status' }, error)],
+                    }),
+            ];
+            // bare（0.2.0 插件页的 page 视图）已自带页头，去掉折叠卡片外壳直接渲染表单。
+            if (bare) {
+                return h('div', {
+                    className: 'wp-sf-card wp-sf-cardBare',
+                    children: [h('div', { className: 'wp-sf-body', children: bodyContent })],
+                });
+            }
             return h('li', {
                 className: 'wp-sf-card' + (open ? ' wp-sf-cardOpen' : ''),
                 children: [
@@ -4524,55 +4565,18 @@ window.__ModuleLoader__.load({
                             }),
                         ],
                     }),
-                    open &&
-                        h('div', {
-                            className: 'wp-sf-body',
-                            children: [
-                                panel(t('secParams'), null, paramsContent),
-                                panel(
-                                    t('secIntents'),
-                                    null,
-                                    h('div', { className: 'wp-sf-fieldGrid', children: intentRows })
-                                ),
-                                panel(
-                                    t('secPools'),
-                                    null,
-                                    h('div', {
-                                        className: 'wp-sf-fieldGrid wp-sf-fieldGridPools',
-                                        children: poolRows,
-                                    })
-                                ),
-                                panel(t('secCustom'), t('hintCustomCategory'), customContent),
-                                panel(
-                                    t('secRules'),
-                                    t('hintRules'),
-                                    h(RulesSection, {
-                                        rules: draft.rules || [],
-                                        onPatch,
-                                        t,
-                                        options: ALL_ANIMS.concat(customIds),
-                                        ruleUi,
-                                    })
-                                ),
-                                error &&
-                                    h('div', {
-                                        className: 'wp-sf-footer',
-                                        children: [
-                                            h('p', { className: 'wp-sf-error', role: 'status' }, error),
-                                        ],
-                                    }),
-                            ],
-                        }),
+                    open && h('div', { className: 'wp-sf-body', children: bodyContent }),
                 ],
             });
         }
 
-        function SettingsCard({ api, store, locale, customStore, ruleRuntime }) {
+        function SettingsCard({ api, store, locale, customStore, ruleRuntime, bare = false }) {
             var [draft, setDraft] = useState(null); // 编辑中的配置（mergeConfig 合并）
             var [saving, setSaving] = useState(false);
             var [savedAt, setSavedAt] = useState(0);
             var [error, setError] = useState(null);
-            var [open, setOpen] = useState(false); // 卡片折叠（对齐官方 PluginCard）
+            // bare（0.2.0 插件页 section）默认展开；0.1.x 官方设置卡片默认折叠。
+            var [open, setOpen] = useState(bare);
             var toggleOpen = () => {
                 setOpen((current) => !current);
                 if (!open && customStore) customStore.load();
@@ -4710,6 +4714,7 @@ window.__ModuleLoader__.load({
                     error: t('settingsUnavailable'),
                     open,
                     onToggle: toggleOpen,
+                    bare,
                     ruleUi,
                     t,
                 });
@@ -4724,6 +4729,7 @@ window.__ModuleLoader__.load({
                     error: error || t('loading'),
                     open,
                     onToggle: toggleOpen,
+                    bare,
                     ruleUi,
                     t,
                 });
@@ -4736,6 +4742,7 @@ window.__ModuleLoader__.load({
                 open,
                 unsaved,
                 t,
+                bare,
                 ruleUi,
                 custom: {
                     ids: ((customActions && customActions.actions) || []).map((a) => a.id),
@@ -4771,33 +4778,124 @@ window.__ModuleLoader__.load({
         // apply：插件被激活时调用
         function apply(ctx, config) {
             const connection = ctx.get('connection');
-            if (connection?.rpc && !connection.api) {
-                // 新版服务可能晚于第三方插件挂载；让 Cordis 管理就绪和重载生命周期。
-                return ctx.inject(['sessions', 'remote.session', 'uiSession'], (ready) =>
-                    mount(ready, config)
-                );
+            // 协议世代判定：0.2.0 的 connection 暴露 generation/state 存储；0.1.x 没有。
+            const modern = !!(connection?.generation || connection?.state) || !connection;
+            if (connection?.api) return mount(ctx, config); // 0.1.0 旧版：api 直取
+            const servicesReady = () => {
+                try {
+                    return !!(ctx.get('sessions') && ctx.get('remote') && ctx.get('uiSession'));
+                } catch (e) {
+                    return false;
+                }
+            };
+            if (modern) {
+                // 0.2.0：remote.session 等子服务需在「已注入 remote」的上下文里访问
+                // （官方客户端一律用 ctx.remote.session）。用 ctx.inject 等待 remote/
+                // sessions/uiSession 就绪后挂载；1.5s 兜底用原 ctx 挂载，保证桌宠出现。
+                if (servicesReady()) return mount(ctx, config);
+                let mounted = false;
+                const doMount = (readyCtx) => {
+                    if (mounted) return;
+                    mounted = true;
+                    mount(readyCtx || ctx, config);
+                };
+                try {
+                    if (typeof ctx.inject === 'function') {
+                        // 官方同款：点号命名空间必须作为依赖注入，之后 ctx.remote.session 才可访问。
+                        ctx.inject(
+                            ['remote', 'remote.session', 'remote.settings', 'sessions', 'uiSession'],
+                            (readyCtx) => doMount(readyCtx)
+                        );
+                    }
+                } catch (e) {
+                    console.error('[whale-pet] ctx.inject(remote.*) failed:', e);
+                }
+                setTimeout(() => doMount(ctx), 1500);
+                return;
             }
-            return mount(ctx, config);
+            // 0.1.2：沿用官方 inject 等待会话/远端服务（服务名不含点号）。
+            return ctx.inject(['sessions', 'remote', 'uiSession'], (ready) => mount(ready, config));
         }
 
         function mount(ctx, config) {
-            // connection 服务（可选获取）：提供 api.events 事件流用于活动感知、
-            // api.settings 用于设置读写；缺失时宠物退化为纯自主链（仍可正常使用）
+            // connection 服务（可选）：0.1.0 旧版 api、0.1.2 RPC；0.2.0 无 connection。
+            // 0.2.0 设置改走 typert Remote 子服务 remote.settings（惰性软获取，见 host-api.js）。
             var connection = ctx.get('connection');
-            var api = resolveHostApi(connection, {
-                sessions: ctx.get('sessions'),
-                remote: ctx.get('remote'),
-                uiSession: ctx.get('uiSession'),
-            });
+            var modern = !!(connection?.generation || connection?.state) || !connection;
+            // 0.2.0：remote 的子命名空间（remote.session / remote.settings）只能在
+            // 「已注入 remote」的上下文里经 ctx.remote 访问；属性访问会有 inject 守卫。
+            var remoteSvc = null;
+            try {
+                remoteSvc = ctx.remote;
+            } catch (e) {
+                remoteSvc = undefined;
+            }
+            if (!remoteSvc) {
+                try {
+                    remoteSvc = ctx.get('remote');
+                } catch (e) {
+                    remoteSvc = undefined;
+                }
+            }
+            var remoteSession = undefined;
+            if (remoteSvc) {
+                try {
+                    remoteSession = remoteSvc.session;
+                } catch (e) {
+                    remoteSession = undefined;
+                }
+            }
+            var api = null;
+            try {
+                api = resolveHostApi(connection, {
+                    modern,
+                    sessions: ctx.get('sessions'),
+                    remote: remoteSvc,
+                    remoteSession,
+                    uiSession: ctx.get('uiSession'),
+                    getSettings: () => {
+                        try {
+                            return remoteSvc ? remoteSvc.settings : ctx.get('remote.settings');
+                        } catch (e) {
+                            return undefined;
+                        }
+                    },
+                });
+            } catch (e) {
+                console.error('[whale-pet] resolveHostApi failed:', e);
+            }
             // locale 服务（可选获取）：国际化字典注册（中/英）；缺失时回退中文
-            var locale = ctx.get('locale');
-            if (locale) locale.register(SETTINGS_NS, LOCALES);
+            var locale = null;
+            try {
+                locale = ctx.get('locale');
+            } catch (e) {
+                console.error('[whale-pet] ctx.get(locale) failed:', e);
+            }
+            if (locale) {
+                try {
+                    locale.register(SETTINGS_NS, LOCALES);
+                } catch (e) {
+                    console.error('[whale-pet] locale.register failed:', e);
+                }
+            }
+            // 非组件上下文的静态翻译（0.2.0 插件行 summary 用）；无 locale 时回退中文
+            var tStatic = locale ? locale.bind(SETTINGS_NS) : (k) => LOCALES.zh[k] || k;
             // 配置存储：加载设置命名空间 + 订阅热更新（宠物与设置卡片共享）
-            var store = api && api.settings ? createConfigStore(api) : null;
-            if (store) store.load();
+            var store = null;
+            try {
+                store = api && api.settings ? createConfigStore(api) : null;
+                if (store) store.load();
+            } catch (e) {
+                console.error('[whale-pet] store init failed:', e);
+                store = null;
+            }
             // 自定义动作存储（资源层）：宠物与设置卡片共享一个实例
             var customStore = createCustomStore();
-            customStore.load();
+            try {
+                customStore.load();
+            } catch (e) {
+                console.error('[whale-pet] customStore.load failed:', e);
+            }
             // 规则共享运行时：传感器命中回调（上次触发时间戳）+ 试触发
             // 实现（宠物注册），设置卡片消费；两者解耦
             var ruleRuntime = createRuleRuntime();
@@ -4814,7 +4912,7 @@ window.__ModuleLoader__.load({
                         h(WhalePet, { config, api, store, locale, customStore, ruleRuntime, ...ownerProps })
                 );
             });
-            // 设置卡片：官方"设置 → 插件"页，键 = 设置命名空间
+            // 槽位 2a：0.1.x 官方"设置 → 插件"卡片（key = 设置命名空间）
             ctx.slots.inject('settings.plugin.item', function* () {
                 yield ctx.slots.register(
                     {
@@ -4825,6 +4923,28 @@ window.__ModuleLoader__.load({
                     },
                     (ownerProps) =>
                         h(SettingsCard, { api, store, locale, customStore, ruleRuntime, ...ownerProps })
+                );
+            });
+            // 槽位 2b：0.2.0 插件页"行配置"槽（key = <包名>#<行 id>）。summary 视图
+            // 渲染一行简介，page 视图渲染完整表单（bare，去掉折叠外壳）。0.1.x 无此槽 → 不触发。
+            ctx.slots.inject('plugins.row.config', function* () {
+                yield ctx.slots.register(
+                    {
+                        name: 'plugins.row.config',
+                        key: '@luweiyabo/dsh-whale-pet#whale-pet',
+                    },
+                    (ownerProps) =>
+                        ownerProps && ownerProps.view === 'summary'
+                            ? tStatic('desc')
+                            : h(SettingsCard, {
+                                  ...ownerProps,
+                                  api,
+                                  store,
+                                  locale,
+                                  customStore,
+                                  ruleRuntime,
+                                  bare: true,
+                              })
                 );
             });
         }

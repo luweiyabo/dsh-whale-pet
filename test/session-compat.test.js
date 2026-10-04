@@ -105,7 +105,11 @@ test('新版 current 范围切换取消旧订阅，丢弃迟到帧，卸载释�
     const frames = [];
     const stop = subscribeSessionActivity(f, (frame) => frames.push(frame), { scope: 'current' });
     assert.equal(f.calls.length, 1);
-    assert.deepEqual(f.calls[0].request, { address: { kind: 'session', sessionId: 'a' }, maxMessages: 1 });
+    assert.deepEqual(f.calls[0].request, {
+        address: { kind: 'session', sessionId: 'a' },
+        assistantStream: true,
+        maxMessages: 1,
+    });
     f.sessions.list.set({ ...f.sessions.list.getSnapshot(), current: 'b' });
     assert.equal(f.calls[0].signal.aborted, true);
     assert.equal(f.calls.length, 2);
@@ -257,7 +261,7 @@ test('新版客户端挂载等待会话与 Remote 命名空间就绪', async () 
         },
         {}
     );
-    assert.deepEqual(Array.from(dependencies), ['sessions', 'remote.session', 'uiSession']);
+    assert.deepEqual(Array.from(dependencies), ['sessions', 'remote', 'uiSession']);
     assert.equal(typeof mount, 'function');
 });
 
