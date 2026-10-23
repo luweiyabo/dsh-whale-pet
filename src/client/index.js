@@ -590,6 +590,15 @@ window.__ModuleLoader__.load({
             LISTENING: 'listening',
             ERROR: 'error',
         };
+        var ACTIVITY_PRESETS = {
+            // 安静模式动作只在原地播放：moveProb 为 0 且其余概率之和为 1，
+            // 使 pickNext 的移动分支不可达（点击移动/拖拽等用户操作不受影响）
+            quiet: { idleProb: 0.55, turnProb: 0.1, actProb: 0.35, moveProb: 0 },
+            balanced: { idleProb: 0.3, turnProb: 0.1, actProb: 0.4, moveProb: 0.2 },
+            lively: { idleProb: 0.15, turnProb: 0.1, actProb: 0.45, moveProb: 0.3 },
+        };
+        // 旧版"安静"预设误带 10% 自主移动概率，迁移时把该份额还给动作池
+        var LEGACY_QUIET_BEHAVIOR = { idleProb: 0.55, turnProb: 0.1, actProb: 0.25, moveProb: 0.1 };
         var DEFAULT_CONFIG = {
             visible: true,
             bubbles: true,
@@ -599,10 +608,7 @@ window.__ModuleLoader__.load({
             position: 'bottom-right',
             scope: 'current',
             behavior: {
-                idleProb: 0.3,
-                turnProb: 0.1,
-                actProb: 0.4,
-                moveProb: 0.2,
+                ...ACTIVITY_PRESETS.balanced,
                 debounceMs: 500,
                 lingerMs: 1500,
                 errorHoldMs: 3000,
@@ -639,6 +645,15 @@ window.__ModuleLoader__.load({
             if (user.behavior && typeof user.behavior === 'object') {
                 for (var k in c.behavior) {
                     if (typeof user.behavior[k] === 'number') c.behavior[k] = user.behavior[k];
+                }
+                // 迁移：旧版"安静"预设带自主移动概率，与"安静=原地播放"语义矛盾
+                if (
+                    c.behavior.idleProb === LEGACY_QUIET_BEHAVIOR.idleProb &&
+                    c.behavior.turnProb === LEGACY_QUIET_BEHAVIOR.turnProb &&
+                    c.behavior.actProb === LEGACY_QUIET_BEHAVIOR.actProb &&
+                    c.behavior.moveProb === LEGACY_QUIET_BEHAVIOR.moveProb
+                ) {
+                    c.behavior = { ...c.behavior, ...ACTIVITY_PRESETS.quiet };
                 }
             }
             for (var g of ['intents', 'pools']) {
@@ -4247,20 +4262,15 @@ window.__ModuleLoader__.load({
                 )
             );
             // 显示与行为设置：面向用户的开关、四角位置和活跃程度预设（一行多个控件）
-            var activityPresets = {
-                quiet: { idleProb: 0.55, turnProb: 0.1, actProb: 0.25, moveProb: 0.1 },
-                balanced: { idleProb: 0.3, turnProb: 0.1, actProb: 0.4, moveProb: 0.2 },
-                lively: { idleProb: 0.15, turnProb: 0.1, actProb: 0.45, moveProb: 0.3 },
-            };
-            var activityLevel = Object.keys(activityPresets).reduce((best, key) => {
+            var activityLevel = Object.keys(ACTIVITY_PRESETS).reduce((best, key) => {
                 var score = ['idleProb', 'turnProb', 'actProb', 'moveProb'].reduce(
-                    (sum, field) => sum + Math.pow((behavior[field] || 0) - activityPresets[key][field], 2),
+                    (sum, field) => sum + Math.pow((behavior[field] || 0) - ACTIVITY_PRESETS[key][field], 2),
                     0
                 );
                 return !best || score < best.score ? { key, score } : best;
             }, null).key;
             var setActivityLevel = (level) =>
-                onPatch((d) => ({ ...d, behavior: { ...d.behavior, ...activityPresets[level] } }));
+                onPatch((d) => ({ ...d, behavior: { ...d.behavior, ...ACTIVITY_PRESETS[level] } }));
             var toggleItem = (key, label, hint, checked, onChange, disabled) =>
                 h('label', {
                     key,
@@ -4965,6 +4975,8 @@ window.__ModuleLoader__.load({
             createArbiter,
             startActivitySensor,
             DEFAULT_CONFIG,
+            ACTIVITY_PRESETS,
+            LEGACY_QUIET_BEHAVIOR,
             mergeConfig,
             createConfigStore,
             INTENT_CFG_KEY,
