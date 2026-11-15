@@ -1,6 +1,16 @@
 import { createAnimationCatalog } from './animations.js';
 import { createActivitySystem } from './activity.js';
 import { resolveHostApi } from './host-api.js';
+import {
+    addUsage,
+    emptyUsage,
+    festivalsOn,
+    formatDuration,
+    formatTokens,
+    seasonOfMonth,
+    situationalPool,
+    summarizeTurn,
+} from './schedule.js';
 
 /**
  * ============================================================================
@@ -65,6 +75,10 @@ window.__ModuleLoader__.load({
             '.wp-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;transition:opacity .18s ease;transform-origin:center}',
             // 显示中的视频（is-front 类）
             '.wp-video.is-front{opacity:1}',
+            // 首帧海报层：视频就绪前先用静态 PNG 占位（带 alpha），避免冷启动空白
+            '.wp-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;transition:opacity .24s ease}',
+            '.wp-poster.is-hidden{opacity:0}',
+            '@media (prefers-reduced-motion: reduce){.wp-poster{transition:none}}',
             // 命中层：覆盖人物区域（HIT_BOX），唯一可交互区域；光标跟随 + 拖拽抓取
             '.wp-hit{position:absolute;pointer-events:auto;cursor:default;z-index:1}',
             '.wp-hit.dragging{cursor:grabbing}',
@@ -575,6 +589,246 @@ window.__ModuleLoader__.load({
         }
 
         // ============================================================================
+        // 浏览器环境辅助：可见性 / 标签页主从 / 首帧海报 / 上传探测
+        // ============================================================================
+        // 首帧海报（带 alpha 的 PNG，由待机动画首帧导出）
+        var POSTER_URL = '/whale-pet/poster/idle.png';
+        // 页面是否可见（把 document 访问收敛到一处，SSR/无 DOM 环境安全）
+        function pageVisible() {
+            return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+        }
+        // 可见性 hook：隐藏时暂停视频与余额轮询，恢复时继续
+        function useDocumentVisible() {
+            var [visible, setVisible] = useState(pageVisible());
+            useEffect(() => {
+                if (typeof document === 'undefined') return;
+                var onChange = () => setVisible(pageVisible());
+                document.addEventListener('visibilitychange', onChange);
+                return () => document.removeEventListener('visibilitychange', onChange);
+            }, []);
+            return visible;
+        }
+
+        // ---- 标签页主从：同一浏览器只保留一只宠物 ----
+        // 用 localStorage 心跳而不是 BroadcastChannel：后者在部分 Electron /
+        // 沙箱环境不可用，而 storage 事件在所有同源标签间都可靠。
+        var LEADER_KEY = 'dsh-whale-pet.leader';
+        var LEADER_TTL_MS = 6000; // 心跳超过这个时长没更新 → 视为原主已消失
+        var LEADER_BEAT_MS = 2000;
+        /** 心跳记录是否仍然有效（纯函数，便于单测） */
+        function leaderRecordFresh(record, now, ttlMs) {
+            if (!record || typeof record !== 'object' || typeof record.id !== 'string' || !record.id)
+                return false;
+            var ts = Number(record.ts);
+            if (!Number.isFinite(ts)) return false;
+            var ttl = Number.isFinite(ttlMs) ? ttlMs : LEADER_TTL_MS;
+            return now - ts <= ttl;
+        }
+        function readLeaderRecord() {
+            try {
+                var raw = window.localStorage.getItem(LEADER_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                return null;
+            }
+        }
+        function writeLeaderRecord(id, ts) {
+            try {
+                window.localStorage.setItem(LEADER_KEY, JSON.stringify({ id: id, ts: ts }));
+            } catch (e) {
+                /* 隐私模式/存储被禁用：退化为每个标签各自显示（与旧行为一致） */
+            }
+        }
+        /**
+         * 主从选举：返回是否是「主标签」。
+         * 首帧延迟一小段随机时间再抢主，避免两个标签同时打开时同时自封；
+         * 抢到后每 2s 续心跳，非主标签发现心跳新鲜就让位。
+         */
+        function useLeaderTab() {
+            var idRef = useRef('wp-' + Math.random().toString(36).slice(2, 10));
+            // 没有有效心跳时先假定自己是主：常见场景（只开一个标签）不必等延迟
+            // claim 才出现宠物；并发抢主时下面的回读会让后写者胜出。
+            var [leader, setLeader] = useState(() => !leaderRecordFresh(readLeaderRecord(), Date.now()));
+            useEffect(() => {
+                var id = idRef.current;
+                var disposed = false;
+                var claim = () => {
+                    var now = Date.now();
+                    var current = readLeaderRecord();
+                    if (leaderRecordFresh(current, now)) {
+                        if (current.id !== id) {
+                            setLeader(false);
+                            return;
+                        }
+                        writeLeaderRecord(id, now);
+                        setLeader(true);
+                        return;
+                    }
+                    writeLeaderRecord(id, now);
+                    // 写后回读：并发抢主时后写者胜，先写者在下一次 tick 让位
+                    var check = readLeaderRecord();
+                    setLeader(!!check && check.id === id);
+                };
+                var startTimer = setTimeout(claim, 120 + Math.floor(Math.random() * 280));
+                var beat = setInterval(claim, LEADER_BEAT_MS);
+                var onStorage = (e) => {
+                    if (e.key === LEADER_KEY && !disposed) claim();
+                };
+                var onHide = () => {
+                    // 关闭/刷新标签时主动让位，别让其它标签白等 TTL
+                    try {
+                        var current = readLeaderRecord();
+                        if (current && current.id === id) window.localStorage.removeItem(LEADER_KEY);
+                    } catch (e) {
+                        /* 忽略 */
+                    }
+                };
+                window.addEventListener('storage', onStorage);
+                window.addEventListener('pagehide', onHide);
+                return () => {
+                    disposed = true;
+                    clearTimeout(startTimer);
+                    clearInterval(beat);
+                    window.removeEventListener('storage', onStorage);
+                    window.removeEventListener('pagehide', onHide);
+                    onHide();
+                };
+            }, []);
+            return leader;
+        }
+
+        // ---- 打开宿主设置：桌面端与网页端共用同一条链路 ----
+        // 0.2.x 的桌面端与网页端把设置做成"侧栏底部的设置按钮 → 模态对话框"，
+        // 宿主没有公开的"打开设置"服务：layout.selectPanel() 只接受 main 面板。
+        // 因此按三层降级：
+        //   1) `[data-slot="sidebar.settings"]` 里的模态触发器 —— 槽位渲染出的
+        //      稳定锚点，不随 CSS Module 哈希或界面语言变化（桌面端正是缺这层才失败）；
+        //   2) 模态里点"插件"分组并展开本插件卡片（0.1.x / 旧壳）；
+        //   3) 都找不到 → 用官方 layout 面板接口切到"插件"主面板并高亮本插件行。
+        var PACKAGE_NAME = '@luweiyabo/dsh-whale-pet';
+        /** 取元素的可见文本（无障碍名优先），用于跨语言的兜底定位 */
+        function readableText(el) {
+            return (
+                (el && (el.getAttribute('aria-label') || el.getAttribute('title'))) ||
+                (el && el.textContent) ||
+                ''
+            ).trim();
+        }
+        /** 在 root 内按文本找可点击控件 */
+        function findControlByText(root, names, allowPrefix) {
+            if (!root || typeof root.querySelectorAll !== 'function') return null;
+            var controls = root.querySelectorAll('button,a,[role="button"],[role="tab"]');
+            for (var i = 0; i < controls.length; i += 1) {
+                var text = readableText(controls[i]);
+                for (var j = 0; j < names.length; j += 1) {
+                    var name = names[j];
+                    if (!name) continue;
+                    if (text === name || (allowPrefix && text.indexOf(name) === 0)) return controls[i];
+                }
+            }
+            return null;
+        }
+        /** 找本插件在"插件"页里的行（按包名匹配，桌面端行标题就是包名） */
+        function findPluginRow() {
+            var nodes = document.querySelectorAll('button,[role="button"],li,article,section,div');
+            var best = null;
+            var bestLength = Infinity;
+            for (var i = 0; i < nodes.length; i += 1) {
+                var text = nodes[i].textContent || '';
+                if (text.indexOf(PACKAGE_NAME) === -1) continue;
+                // 越内层越准：取「包含包名且文本最短」的节点，避免高亮整页容器
+                if (text.length < bestLength) {
+                    best = nodes[i];
+                    bestLength = text.length;
+                }
+            }
+            return best;
+        }
+        /** 临时高亮一个元素（2.4s 后还原），引导用户点它的"配置" */
+        function highlightElement(el) {
+            if (!el || !el.style) return;
+            var previous = el.style.outline;
+            el.style.outline = '2px dashed var(--dsw-alias-brand-primary)';
+            el.style.outlineOffset = '3px';
+            setTimeout(function () {
+                if (el.style) el.style.outline = previous;
+            }, 2400);
+        }
+
+        // ---- 上传前的视频元数据探测（客户端尽力而为，宿主仍做文件名/配额校验）----
+        /**
+         * 读取本地视频的宽高与时长。失败/超时（4s）返回 null，不阻断上传。
+         * @param {File} file
+         */
+        function probeVideoFile(file) {
+            return new Promise((resolve) => {
+                if (typeof document === 'undefined' || !file || typeof URL === 'undefined') {
+                    resolve(null);
+                    return;
+                }
+                var url;
+                var el;
+                var settled = false;
+                var finish = (result) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    try {
+                        if (el) {
+                            el.removeAttribute('src');
+                            el.load();
+                        }
+                    } catch (e) {
+                        /* 忽略 */
+                    }
+                    try {
+                        if (url) URL.revokeObjectURL(url);
+                    } catch (e) {
+                        /* 忽略 */
+                    }
+                    resolve(result);
+                };
+                var timer = setTimeout(() => finish(null), 4000);
+                try {
+                    url = URL.createObjectURL(file);
+                    el = document.createElement('video');
+                    el.preload = 'metadata';
+                    el.muted = true;
+                    el.playsInline = true;
+                    el.onloadedmetadata = () =>
+                        finish({
+                            width: el.videoWidth,
+                            height: el.videoHeight,
+                            duration: Number.isFinite(el.duration) ? el.duration : 0,
+                        });
+                    el.onerror = () => finish(null);
+                    el.src = url;
+                } catch (e) {
+                    finish(null);
+                }
+            });
+        }
+        /**
+         * 建议性校验：返回翻译键数组（空数组 = 没有可提醒的问题）。
+         * 不阻断上传，只把「可能不对」的地方说清楚。
+         * @param {{width:number,height:number,duration:number}|null} meta
+         * @param {File} file
+         */
+        function customVideoWarnings(meta, file) {
+            var out = [];
+            var name = (file && file.name) || '';
+            if (/\.mp4$/i.test(name)) out.push('uploadWarnNoAlpha');
+            if (!meta) {
+                out.push('uploadWarnUnreadable');
+                return out;
+            }
+            var ratio = meta.width && meta.height ? meta.width / meta.height : 0;
+            if (ratio && Math.abs(ratio - 16 / 9) > 0.02) out.push('uploadWarnAspect');
+            if (meta.duration > 15) out.push('uploadWarnLong');
+            return out;
+        }
+
+        // ============================================================================
         // 配置系统—— 默认值 + 用户配置合并 + 配置存储
         // ============================================================================
         // 配置来源：宿主 settings 命名空间 'whale-pet'（settings.yaml），
@@ -607,6 +861,11 @@ window.__ModuleLoader__.load({
             size: 462,
             position: 'bottom-right',
             scope: 'current',
+            // 拖拽后的自由位置（视口比例 0-1；-1 = 未设置 → 回落到 position 角落）
+            posX: -1,
+            posY: -1,
+            // 日历感知：节日/季节动画只在应景时间出现在随机动作池（可关）
+            calendar: { enabled: true, festival: true, seasonal: true },
             behavior: {
                 ...ACTIVITY_PRESETS.balanced,
                 debounceMs: 500,
@@ -642,6 +901,14 @@ window.__ModuleLoader__.load({
             if (['bottom-left', 'bottom-right', 'top-left', 'top-right'].indexOf(user.position) !== -1)
                 c.position = user.position;
             if (user.scope === 'current' || user.scope === 'any') c.scope = user.scope;
+            if (typeof user.posX === 'number' && user.posX >= 0 && user.posX <= 1) c.posX = user.posX;
+            if (typeof user.posY === 'number' && user.posY >= 0 && user.posY <= 1) c.posY = user.posY;
+            if (user.calendar && typeof user.calendar === 'object') {
+                for (var calKey in c.calendar) {
+                    if (typeof user.calendar[calKey] === 'boolean')
+                        c.calendar[calKey] = user.calendar[calKey];
+                }
+            }
             if (user.behavior && typeof user.behavior === 'object') {
                 for (var k in c.behavior) {
                     if (typeof user.behavior[k] === 'number') c.behavior[k] = user.behavior[k];
@@ -818,7 +1085,7 @@ window.__ModuleLoader__.load({
         // config：来自 patch 配置（兜底）。api：connection 服务的 api 对象（事件感知；
         // 缺失时退化为纯自主链桌宠）。store：设置配置存储（null = 走代码默认）。
         // customStore：自定义动作存储（null = 不支持自定义动作）。
-        function WhalePet({ config, api, store, locale, customStore, ruleRuntime, useSessions }) {
+        function WhalePet({ config, api, store, locale, customStore, ruleRuntime, layout, useSessions }) {
             // ---- 设置配置：订阅配置存储，热生效 ----
             // cfg = 完整合并配置（默认值+用户值）；未加载成功前为 null（走代码默认）
             var [cfg, setCfg] = useState(store ? store.get() : null);
@@ -947,6 +1214,18 @@ window.__ModuleLoader__.load({
             var [customPos, setCustomPos] = useState(null);
             // 惯性滑行中：位置由 rAF 直接写 inline style，rootStyle 回填 livePosRef
             var [sliding, setSliding] = useState(false);
+            // 首帧海报是否仍在显示：视频真正开始播放（onPlaying）就撤掉，
+            // 并用 1.5s 兜底。海报是静态帧，若与动画错位会看起来像"两只宠物"。
+            var [posterOn, setPosterOn] = useState(true);
+            var hidePoster = useCallback(() => setPosterOn(false), []);
+            useEffect(() => {
+                var timer = setTimeout(hidePoster, 1500);
+                return () => clearTimeout(timer);
+            }, [hidePoster]);
+            // 标签页主从：非主标签不渲染宠物（避免多只 + 事件订阅翻倍）
+            var isLeader = useLeaderTab();
+            // 页面可见性：后台标签页暂停视频与余额轮询
+            var docVisible = useDocumentVisible();
 
             // ---- 完全隐藏状态 ----
             // hide：{ active, edge }——宠物被整体拖出屏幕后进入隐藏；edge 记录隐藏边缘
@@ -1010,6 +1289,16 @@ window.__ModuleLoader__.load({
             // 金额保持字符串形式，避免浮点转换造成精度损失。
             var currentModelRef = useRef({ route: null, model: null });
             var meterBalanceRef = useRef({ at: 0, status: 'waiting', providerLabel: null, balances: null });
+            // 当前回合统计：{ startedAt, endedAt, tools, usage, last }
+            // usage 来自感知层 onUsage（真实 token），tools 来自 onToolCall，用于
+            // 右键「本轮统计」气泡；也是后续"完成提示"的数据源。
+            var turnStatsRef = useRef({
+                startedAt: 0,
+                endedAt: 0,
+                tools: 0,
+                usage: emptyUsage(),
+                last: null,
+            });
             // 已预取过模型选择的会话 id（避免每次渲染/切换重复调 session.models）
             var showMeterBubble = useCallback(() => {
                 var c = cfgRef.current;
@@ -1033,6 +1322,8 @@ window.__ModuleLoader__.load({
             // meter 开启、token 用量累计（余额随消耗变化）时触发，避免
             // 一次性预取失败后气泡永远停在占位符
             var refreshBalance = useCallback(() => {
+                // 后台标签页不查余额（回到前台由可见性 effect 补一次）
+                if (!pageVisible()) return;
                 var mb = meterBalanceRef.current;
                 var target = currentModelRef.current;
                 if (!target.route) return;
@@ -1186,6 +1477,19 @@ window.__ModuleLoader__.load({
             // ---- 双缓冲层 ----
             var play = useVideoLayer(videoARef, videoBRef, endedRef);
 
+            // ---- 情境化动作池：节日/季节动画只在应景时间出现在随机池 ----
+            // calendar.enabled=false 时原样返回（保持旧行为）；过滤后为空则回退原池
+            var situationalActs = useCallback((pool) => {
+                var c = cfgRef.current;
+                return situationalPool(pool, {
+                    calendar: c && c.calendar,
+                    categoryOf: (id) => {
+                        var entry = animEntry(id);
+                        return entry ? entry.category : undefined;
+                    },
+                });
+            }, []);
+
             // ---- 行为链：每次动画播完 → 按概率选下一个 ----
             // 链式模型（无常驻待机定时器）：每个动画（含待机）都是一次性播放，
             // 播完按概率选下一个；概率与动作池读设置配置，缺省用代码默认。
@@ -1210,7 +1514,7 @@ window.__ModuleLoader__.load({
                     playNext(TURN, true);
                 } else if (roll < b.idleProb + b.turnProb + b.actProb) {
                     // 动作池为空/全悬空/仅剩当前动画时回落待机（避免播空 URL 卡死）
-                    playNext(pickFrom(acts, playing.anim) || IDLE, true);
+                    playNext(pickFrom(situationalActs(acts), playing.anim) || IDLE, true);
                 } else {
                     // 移动概率：先试"走向光标附近"（FOLLOW_CHANCE 比例），再朝 facing
                     // 漫游；空间不够/配置移动池为空则回退随机动作。
@@ -1219,7 +1523,7 @@ window.__ModuleLoader__.load({
                         if (Math.random() < FOLLOW_CHANCE && tryFollowPointer()) return;
                         if (tryPlanMove()) return;
                     }
-                    playNext(pickFrom(acts, playing.anim) || IDLE, true);
+                    playNext(pickFrom(situationalActs(acts), playing.anim) || IDLE, true);
                 }
             };
 
@@ -1231,8 +1535,33 @@ window.__ModuleLoader__.load({
                     // onReady 时 facingRef 已是翻转后的值（setFacing 的渲染先于本回调）
                     el.style.transform = animFacingTransform(playing.anim, facingRef.current);
                     if (pendingMoveRef.current) startDrive(el);
+                    setPosterOn(false); // 首帧视频就绪：海报淡出
                 });
             }, [playing]);
+
+            // ---- 后台标签页：暂停两路视频（Chromium 不保证后台标签暂停媒体），
+            // 恢复时只续播当前前景层。行为链靠 onended 推进，暂停即自然挂起。----
+            useEffect(() => {
+                var videos = [videoARef.current, videoBRef.current];
+                if (!docVisible) {
+                    videos.forEach((el) => {
+                        if (el && !el.paused) {
+                            el.dataset.wpPaused = '1';
+                            el.pause();
+                        }
+                    });
+                    return;
+                }
+                videos.forEach((el) => {
+                    if (el && el.dataset.wpPaused) {
+                        delete el.dataset.wpPaused;
+                        if (el.classList.contains('is-front')) el.play().catch(() => {});
+                    }
+                });
+                // 回到前台补一次余额（后台期间被 pageVisible 拦下的轮询）
+                var c = cfgRef.current;
+                if (c && c.meter) refreshBalance();
+            }, [docVisible]);
 
             // ---- 显示开关恢复（false→true）：visible=false 时组件 return null 卸载了
             // 两个 <video>，重新开启后元素是新建的（src 为空）；此时 playing 未变，
@@ -1255,7 +1584,8 @@ window.__ModuleLoader__.load({
             // 仲裁器输出意图时抢占播放对应动作；用户交互/交互动画进行中不抢占。
             // 参数经 arbOptsRef 动态读取（设置自动保存即热生效，不重建事件流）。
             useEffect(() => {
-                if (!api || (!api.events && !api.subscribeActivity)) return;
+                // 非主标签不订阅事件流：同一浏览器多标签会重复订阅、重复播放
+                if (!api || !isLeader || (!api.events && !api.subscribeActivity)) return;
                 var arbiter = createArbiter(arbOptsRef.current);
                 var onIntent = (intent) => {
                     var prev = intentRef.current;
@@ -1355,11 +1685,34 @@ window.__ModuleLoader__.load({
                         if (!route) return;
                         adoptModel(route, model);
                     },
-                    // 有新用量时节流刷新官方余额，不在本地估算费用。
-                    onUsage: () => {
+                    // 用量：累积进当前回合统计（供"本轮统计"气泡与后续完成提示），
+                    // 同时节流刷新官方余额（不在本地估算费用）。
+                    onUsage: (usage) => {
+                        var st = turnStatsRef.current;
+                        st.usage = addUsage(st.usage, usage);
                         if (cfgRef.current && cfgRef.current.meter) {
                             refreshBalance();
                         }
+                    },
+                    // 回合边界：开始重置统计，结束定格（不改动播放，只记账）
+                    onTurn: (info) => {
+                        var st = turnStatsRef.current;
+                        if (info.phase === 'start') {
+                            turnStatsRef.current = {
+                                startedAt: info.at,
+                                endedAt: 0,
+                                tools: 0,
+                                usage: emptyUsage(),
+                                last: st.last,
+                            };
+                            return;
+                        }
+                        st.endedAt = info.at;
+                        turnStatsRef.current = { ...st, endedAt: info.at, last: summarizeTurn(st) };
+                    },
+                    // 工具调用计数（回合统计的"步数"）
+                    onToolCall: () => {
+                        turnStatsRef.current.tools += 1;
                     },
                     // 多会话感知范围：scope=current 时只接受当前会话的帧（无当前会话则不过滤）
                     filter: (frame) => {
@@ -1375,11 +1728,11 @@ window.__ModuleLoader__.load({
                     unsub();
                     arbiter.dispose();
                 };
-            }, [api, cfg && cfg.scope, cfg?.scope === 'current' ? currentSession : undefined]);
+            }, [api, isLeader, cfg && cfg.scope, cfg?.scope === 'current' ? currentSession : undefined]);
 
             // ---- 额度气泡常驻：meter 开启时显示常驻气泡并拉取余额；关闭时清除 ----
             useEffect(() => {
-                if (!cfg) return;
+                if (!cfg || !isLeader) return;
                 if (cfg.meter === false) {
                     // meter 关闭：清除常驻额度气泡（不影响临时文字气泡）
                     setBubble((b) => (b && b.sticky ? null : b));
@@ -1405,21 +1758,21 @@ window.__ModuleLoader__.load({
                 // 也同步外部产生的消费；服务端仍有 30 秒缓存与限流保护。
                 var balanceTimer = setInterval(refreshBalance, 31000);
                 return () => clearInterval(balanceTimer);
-            }, [cfg && cfg.meter]);
+            }, [cfg && cfg.meter, isLeader]);
 
             // ---- 余额模型预取：当前会话出现/切换时直接解析其模型选择 ----
             // 打开 Harness 时默认会话即带模型，无需先调用一次模型（request/context）
             // 才能显示余额；解析失败允许下次会话变化时重试。
             useEffect(() => {
                 var c = cfgRef.current;
-                if (!c || c.meter !== true) return;
+                if (!c || c.meter !== true || !isLeader) return;
                 var sessionId = currentSessionRef.current;
                 currentModelRef.current = { route: '', model: '' };
                 meterBalanceRef.current = { at: 0, status: 'waiting', providerLabel: null, balances: null };
                 showMeterBubble();
                 if (!sessionId) return;
                 resolveSessionModel();
-            }, [currentSession, cfg && cfg.meter]);
+            }, [currentSession, cfg && cfg.meter, isLeader]);
 
             // ---- 气泡定时消失（临时气泡 3.6s；常驻额度气泡 sticky 不自动消失） ----
             useEffect(() => {
@@ -1451,6 +1804,47 @@ window.__ModuleLoader__.load({
                     ruleRuntime.trigger = null;
                 };
             }, [ruleRuntime]);
+
+            // ---- 位置持久化：设置里的 posX/posY（比例坐标）→ customPos ----
+            // 只恢复一次：用户之后的操作（拖拽/回家/目标移动）优先于磁盘值。
+            var posRestoredRef = useRef(false);
+            useEffect(() => {
+                if (posRestoredRef.current || !cfg) return;
+                posRestoredRef.current = true;
+                if (
+                    typeof cfg.posX === 'number' &&
+                    typeof cfg.posY === 'number' &&
+                    cfg.posX >= 0 &&
+                    cfg.posY >= 0
+                )
+                    setCustomPos({ rx: cfg.posX, ry: cfg.posY });
+            }, [cfg]);
+            // customPos 变化 → 防抖写回设置（700ms；拖拽中频繁变化也只写一次落点）
+            var savedPosKeyRef = useRef(null);
+            useEffect(() => {
+                if (!posRestoredRef.current || !api || !api.settings) return;
+                var next = customPos
+                    ? {
+                          x: Math.round(customPos.rx * 10000) / 10000,
+                          y: Math.round(customPos.ry * 10000) / 10000,
+                      }
+                    : { x: -1, y: -1 };
+                var key = next.x + ',' + next.y;
+                if (savedPosKeyRef.current === key) return;
+                var timer = setTimeout(() => {
+                    savedPosKeyRef.current = key;
+                    Promise.resolve(
+                        api.settings.update({ ns: 'whale-pet', patch: { posX: next.x, posY: next.y } })
+                    )
+                        .then(() => {
+                            if (store) store.load();
+                        })
+                        .catch(() => {
+                            savedPosKeyRef.current = null; // 失败允许下次重试
+                        });
+                }, 700);
+                return () => clearTimeout(timer);
+            }, [customPos, api, store]);
 
             // ---- 窗口尺寸变化：重算比例位置（宠物保持相对窗口位置） ----
             useEffect(() => {
@@ -2189,9 +2583,9 @@ window.__ModuleLoader__.load({
                 if (dragRef.current.active || dragRef.current.dragging) return; // 拖拽中不弹
                 e.preventDefault(); // 屏蔽浏览器默认菜单
                 e.stopPropagation();
-                // 钳制在视口内（菜单约 160×120）
+                // 钳制在视口内（菜单约 160×160：回家/本轮统计/打开设置/隐藏）
                 var x = Math.min(e.clientX, window.innerWidth - 170);
-                var y = Math.min(e.clientY, window.innerHeight - 130);
+                var y = Math.min(e.clientY, window.innerHeight - 170);
                 setMenu({ x: Math.max(x, 4), y: Math.max(y, 4) });
             };
             // 回家：回默认角落（清自定义位置），到家打个招呼
@@ -2237,49 +2631,124 @@ window.__ModuleLoader__.load({
                     fallback();
                 }
             };
-            // 打开设置：先打开宿主设置，再依次选择“插件”和“鲸鱼桌宠”。
-            // 宿主暂无公开导航 API，因此只匹配明确的可点击控件文本/无障碍名称，
-            // 并短暂轮询等待对话框与插件页完成挂载。
-            var menuOpenSettings = () => {
+            // 本轮统计：把累计的 tokens / 工具步数 / 耗时说一句（数据已在 ref 里）
+            var menuShowStats = () => {
                 setMenu(null);
-                var controls = () =>
-                    Array.from(document.querySelectorAll('button,a,[role="button"],[role="tab"]'));
-                var textOf = (el) =>
-                    (
-                        el.getAttribute('aria-label') ||
-                        el.getAttribute('title') ||
-                        el.textContent ||
-                        ''
-                    ).trim();
-                var findNamed = (names, allowPrefix) =>
-                    controls().find((el) => {
-                        var text = textOf(el);
-                        return names.some(
-                            (candidate) =>
-                                text === candidate || (allowPrefix && text.indexOf(candidate) === 0)
-                        );
-                    });
-                var settingsButton =
-                    document.querySelector('.hHd-Xa_settingsArea button') || findNamed(['设置', 'Settings']);
-                if (!settingsButton) {
+                var st = turnStatsRef.current;
+                var last = st.last || summarizeTurn(st);
+                if (!last.durationMs && !last.tools && !last.tokens) {
+                    showBubble(tPet('statNone'));
+                    return;
+                }
+                var parts = [];
+                if (last.durationMs) parts.push(formatDuration(last.durationMs));
+                if (last.tools) parts.push(last.tools + ' ' + tPet('statSteps'));
+                if (last.tokens) parts.push(formatTokens(last.tokens) + ' tokens');
+                showBubble(tPet('statTurn') + ' ' + parts.join(' · '));
+            };
+
+            // 打开本插件的配置页（"图1"）：0.2.x 里这一页在「插件」主面板中，
+            // 由插件行上的「配置」按钮打开（aria-label = `配置 <名称>`）。
+            // 宿主没有公开的"打开设置/打开插件页"服务，所以：
+            //   1) 官方 layout 接口切到 plugins 主面板（网页端与桌面端都存在该 key）；
+            //   2) 在列表里找带 whale-pet 的「配置」按钮并点击；找到不到就退「查看」；
+            //   3) 若当前停在某个详情页（有"返回"按钮），先返回列表再找；
+            //   4) 全都失败才高亮本插件行 + 气泡提示。
+            var findRowButton = (pattern) => {
+                var nodes = document.querySelectorAll('button[aria-label]');
+                for (var i = 0; i < nodes.length; i += 1) {
+                    var label = nodes[i].getAttribute('aria-label') || '';
+                    if (label.indexOf('whale-pet') === -1) continue;
+                    if (pattern.test(label)) return nodes[i];
+                }
+                return null;
+            };
+            var goPetConfigPage = () => {
+                if (!layout || typeof layout.selectPanel !== 'function') return false;
+                try {
+                    layout.selectPanel('plugins');
+                } catch (e) {
+                    return false; // 面板未注册（更旧的壳）：交给 legacy 路径
+                }
+                var attempts = 0;
+                var step = () => {
+                    attempts += 1;
+                    var configure = findRowButton(/^(配置|Configure|configur)/i);
+                    if (configure) {
+                        configure.click();
+                        return;
+                    }
+                    var detail = findRowButton(/^(查看|View)/i);
+                    if (detail) {
+                        detail.click();
+                        return;
+                    }
+                    // 停在别的详情页：先返回列表（backToPackage / backToList）
+                    var back = document.querySelector(
+                        'button[aria-label^="返回"], button[aria-label^="Back"]'
+                    );
+                    if (back && attempts < 12) {
+                        back.click();
+                        setTimeout(step, 150);
+                        return;
+                    }
+                    if (attempts < 20) {
+                        setTimeout(step, 120);
+                        return;
+                    }
+                    var row = findPluginRow();
+                    if (row) {
+                        if (row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+                        highlightElement(row);
+                    }
+                    showBubble(tPet('settingsRowHint'));
+                };
+                setTimeout(step, 120);
+                return true;
+            };
+
+            // 0.1.x（老壳）：只有"设置 → 插件"卡片这一条路，按槽位锚点 + 文本兜底
+            var openSettingsLegacy = () => {
+                var trigger =
+                    document.querySelector(
+                        '[data-slot="sidebar.settings"] button[aria-haspopup="dialog"], ' +
+                            '[data-slot="sidebar.settings"] button'
+                    ) ||
+                    document.querySelector('.hHd-Xa_settingsArea button') ||
+                    findControlByText(document, ['设置', 'Settings'], false);
+                if (!trigger) {
                     showBubble(tPet('settingsHint'));
                     return;
                 }
-                settingsButton.click();
+                // 只在未打开时点一次：重复 click 会把已经打开的模态再切一次
+                if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
                 var attempts = 0;
-                var openPlugin = () => {
-                    var petButton = findNamed([tPet('title'), '鲸鱼桌宠', 'Whale Pet'], true);
-                    if (petButton) {
-                        if (petButton.getAttribute('aria-expanded') !== 'true') petButton.click();
-                        if (petButton.scrollIntoView) petButton.scrollIntoView({ block: 'center' });
+                var lastNavClick = null;
+                var step = () => {
+                    attempts += 1;
+                    var dialog = document.querySelector('[role="dialog"]') || document;
+                    var petCard = findControlByText(dialog, [tPet('title'), '鲸鱼桌宠', 'Whale Pet'], true);
+                    if (petCard) {
+                        if (petCard.getAttribute('aria-expanded') !== 'true') petCard.click();
+                        if (petCard.scrollIntoView) petCard.scrollIntoView({ block: 'center' });
                         return;
                     }
-                    var pluginButton = findNamed(['插件', 'Plugins']);
-                    if (pluginButton) pluginButton.click();
-                    if (++attempts < 20) setTimeout(openPlugin, 100);
+                    var pluginsNav = findControlByText(dialog, ['插件', 'Plugins'], false);
+                    if (pluginsNav && pluginsNav !== lastNavClick) {
+                        lastNavClick = pluginsNav;
+                        pluginsNav.click();
+                    }
+                    if (attempts < 12) setTimeout(step, 100);
                     else showBubble(tPet('settingsHint'));
                 };
-                setTimeout(openPlugin, 0);
+                setTimeout(step, 60);
+            };
+
+            var menuOpenSettings = () => {
+                setMenu(null);
+                // 两个平台统一：直接进「插件」页并打开本插件的配置页
+                if (goPetConfigPage()) return;
+                openSettingsLegacy();
             };
 
             // ============================================================================
@@ -2355,7 +2824,13 @@ window.__ModuleLoader__.load({
                         : {};
 
             // 两个 video 共用的 props（纯播放属性，交互交给命中层）
-            var commonVideoProps = { muted: true, playsInline: true, autoPlay: true, title: 'dsh-whale-pet' };
+            var commonVideoProps = {
+                muted: true,
+                playsInline: true,
+                autoPlay: true,
+                title: 'dsh-whale-pet',
+                onPlaying: hidePoster,
+            };
             // 命中层 props：覆盖 HIT_BOX 区域，承载全部交互事件与抓取光标。
             // 悬停注视：悬停期间 facing 跟随光标（左半→朝左/右半→朝右），
             // 离开时恢复进入前朝向；拖拽/滑行中不启用。
@@ -2402,6 +2877,8 @@ window.__ModuleLoader__.load({
             // 显示开关：visible=false 时隐藏桌宠（组件不渲染 DOM；hooks 继续运行，
             // 重新开启时视频元素重建、状态保留在 refs 中）
             if (cfg && cfg.visible === false) return null;
+            // 非主标签不渲染宠物（设置卡仍在：两个标签都能改设置）
+            if (!isLeader) return null;
 
             // 渲染树：root > stage > [fx > breathe > [video A, video B], 命中层]
             // fx 层承载 JS 指令式形变（倾斜/拖拽拉伸），breathe 层承载 CSS 动画
@@ -2435,6 +2912,13 @@ window.__ModuleLoader__.load({
                                             );
                                         },
                                         children: [
+                                            posterOn &&
+                                                h('img', {
+                                                    className: 'wp-poster',
+                                                    src: POSTER_URL,
+                                                    alt: '',
+                                                    draggable: false,
+                                                }),
                                             h(
                                                 'video',
                                                 Object.assign({}, commonVideoProps, {
@@ -2500,6 +2984,16 @@ window.__ModuleLoader__.load({
                                         onClick: menuGoHome,
                                     },
                                     tPet('menuHome')
+                                ),
+                                h(
+                                    'button',
+                                    {
+                                        type: 'button',
+                                        role: 'menuitem',
+                                        className: 'wp-menuItem',
+                                        onClick: menuShowStats,
+                                    },
+                                    tPet('menuStats')
                                 ),
                                 h(
                                     'button',
@@ -2600,6 +3094,12 @@ window.__ModuleLoader__.load({
                 labelFx: '交互动效',
                 hintFx: '光标倾斜跟随、点击弹跳与拖拽挤压（系统"减少动态效果"时自动关闭）',
                 hintFxSuspended: '系统已开启"减少动态效果"，动效暂时关闭',
+                labelCalendarEnabled: '日历感知',
+                hintCalendarEnabled: '按日期自动挑选节日与季节动作；关闭后全部动画随机出现',
+                labelCalendarFestival: '节日动作',
+                hintCalendarFestival: '只在节日前后播放节日动画（春节、中秋、万圣节等）',
+                labelCalendarSeasonal: '四季动作',
+                hintCalendarSeasonal: '只在对应季节播放四季动画（堆雪人／摇扇／落叶／风筝）',
                 selectHint: '点一下屏幕，让我走过去~',
                 unsaved: '等待自动保存',
                 meterBalance: '余额 ',
@@ -2611,7 +3111,8 @@ window.__ModuleLoader__.load({
                 menuHome: '回家',
                 menuSettings: '打开设置',
                 menuHide: '隐藏',
-                settingsHint: '从左侧栏打开设置（齿轮）哦~',
+                settingsHint: '从左侧栏底部打开设置（齿轮）哦~',
+                settingsRowHint: '我在插件页高亮那一行啦，点它的设置就能改我~',
                 // 资源层
                 secCustom: '自定义动作',
                 labelCustomDir: '动作目录',
@@ -2730,6 +3231,10 @@ window.__ModuleLoader__.load({
                 opContains: '包含',
                 opRegex: '匹配正则',
                 opExists: '存在',
+                opGt: '大于',
+                opLt: '小于',
+                fieldTime: '本地时间',
+                fieldWeek: '星期',
                 invalidRegex: '正则表达式无效',
                 dangerousRegex: '正则存在灾难性回溯风险（嵌套量词），请改写',
                 ruleMissingActions: '未选动画（触发后回落自主链）',
@@ -2755,6 +3260,15 @@ window.__ModuleLoader__.load({
                 settingsUnavailable: '设置服务不可用',
                 loadFailed: '无法读取设置',
                 saveFailed: '保存失败：',
+                menuStats: '本轮统计',
+                statTurn: '本轮',
+                statSteps: '步',
+                statNone: '本轮还没有数据：先让 Agent 跑一轮吧~',
+                uploadCustomWarn: '这个素材可能会显示异常：\n{list}\n仍然上传吗？',
+                uploadWarnNoAlpha: 'MP4 没有透明通道，宠物背景会变成黑色',
+                uploadWarnAspect: '画面比例不是 16:9，人物可能与站位和命中区对不齐',
+                uploadWarnLong: '时长超过 15 秒，会占满整段播放时间',
+                uploadWarnUnreadable: '读不到视频元数据，可能不是可播放的 WebM/MP4',
             },
             en: {
                 title: 'Whale Pet',
@@ -2796,6 +3310,15 @@ window.__ModuleLoader__.load({
                 labelFx: 'Interactive effects',
                 hintFx: 'Cursor tilt-follow, click bounce and drag squash (auto-disabled under reduced motion)',
                 hintFxSuspended: 'Suspended while the system "Reduce Motion" setting is on',
+                labelCalendarEnabled: 'Calendar awareness',
+                hintCalendarEnabled:
+                    'Pick festival and seasonal actions by date; when off, every animation is random',
+                labelCalendarFestival: 'Festival actions',
+                hintCalendarFestival:
+                    'Play festival animations only around their dates (Spring Festival, Mid-Autumn, Halloween…)',
+                labelCalendarSeasonal: 'Seasonal actions',
+                hintCalendarSeasonal:
+                    'Play seasonal animations only in their season (snowman / fan / leaves / kite)',
                 selectHint: 'Click anywhere to send me there~',
                 unsaved: 'Waiting to auto-save',
                 meterBalance: 'Balance ',
@@ -2807,7 +3330,9 @@ window.__ModuleLoader__.load({
                 menuHome: 'Go home',
                 menuSettings: 'Open settings',
                 menuHide: 'Hide',
-                settingsHint: 'Open settings from the left sidebar~',
+                settingsHint: 'Open settings from the bottom of the left sidebar~',
+                settingsRowHint:
+                    'I highlighted my row on the Plugins page — open its settings to configure me.',
                 // 资源层
                 secCustom: 'Custom Actions',
                 labelCustomDir: 'Folder',
@@ -2927,6 +3452,10 @@ window.__ModuleLoader__.load({
                 opContains: 'contains',
                 opRegex: 'matches regex',
                 opExists: 'exists',
+                opGt: 'greater than',
+                opLt: 'less than',
+                fieldTime: 'local time',
+                fieldWeek: 'weekday',
                 invalidRegex: 'Invalid regular expression',
                 dangerousRegex: 'Regex risks catastrophic backtracking (nested quantifiers); rewrite it',
                 ruleMissingActions: 'No animation selected (falls back to the idle chain)',
@@ -2952,6 +3481,15 @@ window.__ModuleLoader__.load({
                 settingsUnavailable: 'Settings service unavailable',
                 loadFailed: 'Failed to read settings',
                 saveFailed: 'Save failed: ',
+                menuStats: 'This turn',
+                statTurn: 'This turn',
+                statSteps: 'steps',
+                statNone: 'No data yet — let the agent finish a turn first.',
+                uploadCustomWarn: 'This file may look wrong:\n{list}\nUpload anyway?',
+                uploadWarnNoAlpha: 'MP4 has no alpha channel — the pet will get a black background',
+                uploadWarnAspect: 'Not 16:9 — the character may not align with its footprint and hit box',
+                uploadWarnLong: 'Longer than 15s — it will occupy the whole playback slot',
+                uploadWarnUnreadable: 'Could not read the video metadata; it may not be a playable WebM/MP4',
             },
         };
         // 文字气泡文案池（按意图键，zh/en；意图切换时随机一句，IDLE 低频闲聊）
@@ -3349,6 +3887,9 @@ window.__ModuleLoader__.load({
             ['sessionId', 'fieldSession'],
             ['running', 'fieldRunning'],
             ['data.error', 'fieldError'],
+            // 时间维度：本地时钟 HH:MM 与星期（0=周日），配合 gt/lt 写作息类规则
+            ['time', 'fieldTime'],
+            ['dayOfWeek', 'fieldWeek'],
         ];
         var OP_OPTS = [
             ['eq', 'opEq'],
@@ -3356,6 +3897,8 @@ window.__ModuleLoader__.load({
             ['contains', 'opContains'],
             ['regex', 'opRegex'],
             ['exists', 'opExists'],
+            ['gt', 'opGt'],
+            ['lt', 'opLt'],
         ];
         var EVENT_TYPES = [
             'tool/call',
@@ -4126,12 +4669,37 @@ window.__ModuleLoader__.load({
                     return;
                 }
                 setUploadState({ busy: true, message: t('uploadingCustom'), error: false });
-                Promise.resolve(
-                    custom && custom.onUpload
-                        ? custom.onUpload(file)
-                        : Promise.reject(new Error('upload-failed'))
-                )
-                    .then(() => setUploadState({ busy: false, message: t('uploadCustomDone'), error: false }))
+                // 上传前先读元数据：只给建议、不阻断（元数据读不到也照常上传）
+                probeVideoFile(file)
+                    .then((meta) => {
+                        var warnings = customVideoWarnings(meta, file);
+                        if (warnings.length) {
+                            var list = warnings.map((key) => t(key)).join('；');
+                            if (!window.confirm(t('uploadCustomWarn').replace('{list}', list))) return null;
+                        }
+                        return warnings;
+                    })
+                    .then((warnings) => {
+                        if (warnings === null) {
+                            setUploadState({ busy: false, message: null, error: false });
+                            return null;
+                        }
+                        return Promise.resolve(
+                            custom && custom.onUpload
+                                ? custom.onUpload(file)
+                                : Promise.reject(new Error('upload-failed'))
+                        ).then(() =>
+                            setUploadState({
+                                busy: false,
+                                message:
+                                    t('uploadCustomDone') +
+                                    (warnings && warnings.length
+                                        ? ' · ' + warnings.map((key) => t(key)).join(' · ')
+                                        : ''),
+                                error: false,
+                            })
+                        );
+                    })
                     .catch((uploadError) => {
                         var code = uploadError ? uploadError.message : 'upload-failed';
                         var key =
@@ -4329,6 +4897,41 @@ window.__ModuleLoader__.load({
                                 !!draft.fx && !reducedMotion,
                                 (e) => onPatch((d) => ({ ...d, fx: e.target.checked })),
                                 reducedMotion
+                            ),
+                            toggleItem(
+                                'calendarEnabled',
+                                t('labelCalendarEnabled'),
+                                t('hintCalendarEnabled'),
+                                !(draft.calendar && draft.calendar.enabled === false),
+                                (e) =>
+                                    onPatch((d) => ({
+                                        ...d,
+                                        calendar: { ...(d.calendar || {}), enabled: e.target.checked },
+                                    }))
+                            ),
+                            toggleItem(
+                                'calendarFestival',
+                                t('labelCalendarFestival'),
+                                t('hintCalendarFestival'),
+                                !!(draft.calendar && draft.calendar.festival),
+                                (e) =>
+                                    onPatch((d) => ({
+                                        ...d,
+                                        calendar: { ...(d.calendar || {}), festival: e.target.checked },
+                                    })),
+                                !!(draft.calendar && draft.calendar.enabled === false)
+                            ),
+                            toggleItem(
+                                'calendarSeasonal',
+                                t('labelCalendarSeasonal'),
+                                t('hintCalendarSeasonal'),
+                                !!(draft.calendar && draft.calendar.seasonal),
+                                (e) =>
+                                    onPatch((d) => ({
+                                        ...d,
+                                        calendar: { ...(d.calendar || {}), seasonal: e.target.checked },
+                                    })),
+                                !!(draft.calendar && draft.calendar.enabled === false)
                             ),
                         ],
                     }),
@@ -4681,6 +5284,11 @@ window.__ModuleLoader__.load({
                             size: nextDraft.size,
                             position: nextDraft.position,
                             scope: nextDraft.scope,
+                            // 位置与日历：必须一起写回，否则保存任意设置都会把
+                            // 拖拽落点/日历开关重置成默认值
+                            posX: typeof nextDraft.posX === 'number' ? nextDraft.posX : -1,
+                            posY: typeof nextDraft.posY === 'number' ? nextDraft.posY : -1,
+                            calendar: nextDraft.calendar || DEFAULT_CONFIG.calendar,
                             behavior: nextDraft.behavior,
                             intents: nextDraft.intents,
                             pools: nextDraft.pools,
@@ -4881,6 +5489,14 @@ window.__ModuleLoader__.load({
             } catch (e) {
                 console.error('[whale-pet] ctx.get(locale) failed:', e);
             }
+            // layout：官方面板导航服务（0.2.x）。用它把"打开设置"退到插件主面板，
+            // 避免在桌面端完全依赖 DOM 文本匹配。
+            var layout = null;
+            try {
+                layout = ctx.get('layout');
+            } catch (e) {
+                layout = null;
+            }
             if (locale) {
                 try {
                     locale.register(SETTINGS_NS, LOCALES);
@@ -4919,7 +5535,16 @@ window.__ModuleLoader__.load({
                         order: 1000, // 排序（大 = 靠后渲染）
                     },
                     (ownerProps) =>
-                        h(WhalePet, { config, api, store, locale, customStore, ruleRuntime, ...ownerProps })
+                        h(WhalePet, {
+                            config,
+                            api,
+                            store,
+                            locale,
+                            customStore,
+                            ruleRuntime,
+                            layout,
+                            ...ownerProps,
+                        })
                 );
             });
             // 槽位 2a：0.1.x 官方"设置 → 插件"卡片（key = 设置命名空间）
@@ -5016,6 +5641,21 @@ window.__ModuleLoader__.load({
             WALK_ANIM,
             RUN_ANIM,
             BUILTIN_ASSET_REVISIONS,
+            // 日历与回合统计
+            situationalPool,
+            festivalsOn,
+            seasonOfMonth,
+            addUsage,
+            emptyUsage,
+            summarizeTurn,
+            formatDuration,
+            formatTokens,
+            // 环境辅助（可见性 / 主从 / 上传探测）
+            leaderRecordFresh,
+            pageVisible,
+            POSTER_URL,
+            probeVideoFile,
+            customVideoWarnings,
             // 资源层
             setCustomAnims,
             animEntry,

@@ -236,7 +236,8 @@ export function createActivitySystem({ normalizeAnimId }) {
     var RULE_MIN_COOLDOWN_MS = 1000;
     var RULE_MAX_COOLDOWN_MS = 3600000;
     var RULE_MAX_COUNT = 50;
-    var COND_OPS = ['eq', 'ne', 'contains', 'regex', 'exists'];
+    // gt/lt 为数值比较（时间字段按「当日分钟数」比较，见 toComparable）
+    var COND_OPS = ['eq', 'ne', 'contains', 'regex', 'exists', 'gt', 'lt'];
     var RULE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
     // 被测字符串截断长度：约束 contains/regex 的输入规模与内存（长 error
     // 消息场景）。注意：截断不能防灾难性回溯（200 字符对指数型正则仍是
@@ -324,7 +325,18 @@ export function createActivitySystem({ normalizeAnimId }) {
         return re ? re.test(value) : false;
     }
 
-    // 单条件匹配。缺失字段语义：eq/ne/contains/regex 一律 false（"字段不存在"
+    // 比较用的数值化：纯数字 → Number；"HH:MM" → 当日分钟数；其余 → NaN。
+    // 这样 gt/lt 既能写「工具耗时 > 5000」，也能写「时间 > 22:00」。
+    function toComparable(value) {
+        if (value === undefined || value === null) return NaN;
+        var s = String(value);
+        var m = /^(\d{1,2}):(\d{2})$/.exec(s);
+        if (m) return Number(m[1]) * 60 + Number(m[2]);
+        var n = Number(s);
+        return isFinite(n) ? n : NaN;
+    }
+
+    // 单条件匹配。缺失字段语义：eq/ne/contains/regex/gt/lt 一律 false（"字段不存在"
     // 是否算"不等于"有歧义，判存在请用 exists），exists 显式判 undefined。
     // 字符串值先截断（RULE_VALUE_MAX）——约束输入规模。
     function condMatch(c, nframe) {
@@ -342,14 +354,24 @@ export function createActivitySystem({ normalizeAnimId }) {
                 return typeof v === 'string' && v.indexOf(c.value) !== -1;
             case 'regex':
                 return typeof v === 'string' && safeRegexTest(c.value, v);
+            case 'gt':
+            case 'lt': {
+                var lhs = toComparable(v);
+                var rhs = toComparable(c.value);
+                if (!isFinite(lhs) || !isFinite(rhs)) return false;
+                return c.op === 'gt' ? lhs > rhs : lhs < rhs;
+            }
         }
         return false;
     }
 
     // 传感器帧 → 规则匹配用规范化帧（统一形状 + toolName 增强：
     // tool/result 帧本身无工具名，从 turn:step 配对表回查上一次 tool/call）
-    function ruleFrameOf(frame, lastToolByStep) {
+    function ruleFrameOf(frame, lastToolByStep, now) {
         var ev = (frame && frame.event) || {};
+        // 时间维度：本地时钟 HH:MM 与星期（0=周日）。规则里可直接写
+        // 「time gt 22:00」「dayOfWeek eq 0」，配合节日/作息类动作。
+        var at = new Date(typeof now === 'number' && isFinite(now) ? now : Date.now());
         var n = {
             stream: frame.type || '',
             type: ev.type || (frame && frame.type) || '',
@@ -357,6 +379,8 @@ export function createActivitySystem({ normalizeAnimId }) {
             running: frame.running,
             items: frame.items,
             data: ev.data || {},
+            time: String(at.getHours()).padStart(2, '0') + ':' + String(at.getMinutes()).padStart(2, '0'),
+            dayOfWeek: String(at.getDay()),
         };
         if (ev.type === 'tool/call') {
             n.toolName = ev.data && typeof ev.data.name === 'string' ? ev.data.name : '';
@@ -372,7 +396,7 @@ export function createActivitySystem({ normalizeAnimId }) {
     // cooldown 在此钳制（双保险：normalizeRule 已钳，手写数据再兜一次）。
     function matchRules(rules, frame, state, now) {
         var st = state || { lastFired: {}, lastToolByStep: {} };
-        var nframe = ruleFrameOf(frame, st.lastToolByStep);
+        var nframe = ruleFrameOf(frame, st.lastToolByStep, now);
         // tool/call 时记账工具名（配对表超 500 项整体重置，防长会话膨胀）
         var nextTool = st.lastToolByStep;
         var ev = frame && frame.type === 'session/event' ? frame.event || null : null;
@@ -428,6 +452,11 @@ export function createActivitySystem({ normalizeAnimId }) {
                 if (COND_OPS.indexOf(c.op) === -1) return null;
                 var val = String(c.value === undefined ? '' : c.value);
                 if (val.length > 256) return null;
+                // time 字段：把 9:05 规范成 09:05（eq 走字符串比较，必须补零）
+                if (c.field === 'time') {
+                    var tm = /^(\d{1,2}):(\d{2})$/.exec(val.trim());
+                    if (tm) val = String(Number(tm[1])).padStart(2, '0') + ':' + tm[2];
+                }
                 if (c.op === 'regex') {
                     try {
                         new RegExp(val);
@@ -624,6 +653,20 @@ export function createActivitySystem({ normalizeAnimId }) {
                     ev0.data.usage
                 )
                     opts.onUsage(ev0.data.usage);
+                // 回合边界与工具调用：供用量/耗时统计（完成提示、本章统计气泡）
+                if (opts.onToolCall && !frame.snapshot && ev0.type === 'tool/call')
+                    opts.onToolCall((ev0.data && ev0.data.name) || '', frame.sessionId);
+                if (opts.onTurn && !frame.snapshot) {
+                    if (ev0.type === 'turn/start')
+                        opts.onTurn({ phase: 'start', sessionId: frame.sessionId, at: Date.now() });
+                    else if (ev0.type === 'turn/end')
+                        opts.onTurn({
+                            phase: 'end',
+                            sessionId: frame.sessionId,
+                            at: Date.now(),
+                            reason: ev0.data && ev0.data.reason,
+                        });
+                }
             }
             if (api.subscribeActivity) {
                 const next = applyFrame(
