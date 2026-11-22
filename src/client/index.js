@@ -1,4 +1,5 @@
 import { createAnimationCatalog } from './animations.js';
+import EXTRA_LOCALES from './locales/index.js';
 import { createActivitySystem } from './activity.js';
 import { resolveHostApi } from './host-api.js';
 import {
@@ -1269,6 +1270,34 @@ window.__ModuleLoader__.load({
             };
         }
 
+        // 设置表单在场标记：桌宠舞台是 fixed 覆盖层（z-index 高于页面内容），
+        // 命中层 pointer-events:auto 会抢走其下方控件的点击——配置页右侧列的
+        // 开关正好落在桌宠人物范围内，表现为「选择框勾不上」。SettingsForm
+        // 挂载/卸载时增减计数并广播，WhalePet 订阅后收起舞台，离开配置页恢复。
+        var settingsPanelCount = 0;
+        var settingsPanelListeners = new Set();
+        function notifySettingsPanel() {
+            settingsPanelListeners.forEach((fn) => fn());
+        }
+        function subscribeSettingsPanel(listener) {
+            settingsPanelListeners.add(listener);
+            return () => settingsPanelListeners.delete(listener);
+        }
+        function settingsPanelOpen() {
+            return settingsPanelCount > 0;
+        }
+        function enterSettingsPanel() {
+            settingsPanelCount += 1;
+            notifySettingsPanel();
+        }
+        function leaveSettingsPanel() {
+            settingsPanelCount = Math.max(0, settingsPanelCount - 1);
+            notifySettingsPanel();
+        }
+        function useSettingsPanelOpen() {
+            return useSyncExternalStore(subscribeSettingsPanel, settingsPanelOpen, settingsPanelOpen);
+        }
+
         // 自定义动作存储（资源层）：fetch /whale-pet/api/actions →
         // 更新注册表（setCustomAnims）+ 通知订阅者（宠物/设置卡片共享一个实例）。
         // 失败静默（目录可能还没有文件/服务未就绪），卡片刷新或重新打开时重试。
@@ -1505,15 +1534,16 @@ window.__ModuleLoader__.load({
             // 统计气泡文案翻译（bind 返回稳定引用，useCallback 闭包安全）
             var tPet = useTranslate(locale);
             // 当前 locale（气泡语言；通过 useTranslate 的订阅重渲染保持最新）
-            var localeNowRef = useRef('zh');
-            if (locale) {
+            var localeNowRef = useRef(detectLocale());
+            localeNowRef.current = detectLocale();
+            if (locale && typeof locale.getSnapshot === 'function') {
                 var snap = null;
                 try {
-                    snap = locale.getSnapshot ? locale.getSnapshot() : null;
+                    snap = locale.getSnapshot();
                 } catch (e) {
                     snap = null;
                 }
-                localeNowRef.current = (snap && snap.active) || 'zh';
+                if (snap && snap.active) localeNowRef.current = snap.active;
             }
 
             // ---- 显示参数（设置配置优先，patch 配置兜底，最后代码默认） ----
@@ -2206,7 +2236,7 @@ window.__ModuleLoader__.load({
                         var offsetMinutes = new Date().getTimezoneOffset();
                         var metadata = {
                             version: PLUGIN_CLIENT_VERSION,
-                            locale: localeNowRef.current || 'zh',
+                            locale: localeNowRef.current || detectLocale(),
                             timezoneOffsetSeconds: -offsetMinutes * 60,
                         };
                         Promise.resolve(api.account.getBalance(metadata))
@@ -4046,7 +4076,10 @@ window.__ModuleLoader__.load({
 
             // 显示开关：visible=false 只隐藏桌宠 DOM；通知卡片独立渲染，不受影响
             // （hooks 继续运行，重新开启时视频元素重建、状态保留在 refs 中）
-            var petVisible = !(cfg && cfg.visible === false);
+            // 设置表单在场时同样收起：舞台固定在页面之上，命中层会拦下配置页
+            // 控件的点击（右列开关正好落在人物范围内，点不动/勾不上）。
+            var settingsOpen = useSettingsPanelOpen();
+            var petVisible = !(cfg && cfg.visible === false) && !settingsOpen;
             // 非主标签不渲染宠物（设置卡仍在：两个标签都能改设置）
             if (!isLeader) return null;
 
@@ -4951,15 +4984,264 @@ window.__ModuleLoader__.load({
             LOCALES.en['animDescription_' + a.id] = a.description;
         });
 
-        // 翻译 hook：订阅 locale 变化重渲染，返回命名空间绑定的 t（无 locale 服务时回退中文）
+        // DSH 内置语言包的其余语言（ja/es/fr/de/ru/pt）：UI 文案与动作名在
+        // src/client/locales/<lang>.json，描述由模板 + 译名生成，仅 3 条特殊
+        // 描述单独给出。缺翻译的键由语言服务的 fallback 链回退到英文。
+        Object.keys(EXTRA_LOCALES).forEach((lang) => {
+            var pack = EXTRA_LOCALES[lang] || {};
+            var dict = Object.assign({}, pack.strings);
+            ANIMS.forEach((a) => {
+                var name = (pack.animNames && pack.animNames[a.id]) || a.name;
+                dict['animName_' + a.id] = name;
+                dict['animDescription_' + a.id] =
+                    (pack.specialDescriptions && pack.specialDescriptions[a.id]) ||
+                    String(pack.animDescTemplate || '{name}').replace('{name}', name);
+            });
+            LOCALES[lang] = dict;
+        });
+
+        // 支持的语言：与 DSH 内置语言包一致（zh/en 为基线，其余由语言包注册）。
+        // 有语言服务时以它的快照为准；没有服务时才按运行环境语言兜底。
+        // 注意不能优先读 <html lang>：宿主页面静态写死 lang="en"，会把中文界面判成英文。
+        var SUPPORTED_LOCALES = ['zh', 'en', 'ja', 'es', 'fr', 'de', 'ru', 'pt'];
+
+        function normalizeLocaleTag(tag) {
+            var code = String(tag || '')
+                .trim()
+                .toLowerCase()
+                .split(/[-_]/)[0];
+            return SUPPORTED_LOCALES.indexOf(code) >= 0 ? code : null;
+        }
+
+        // 候选按优先级排列：浏览器/宿主 UI 语言优先，文档 lang 只作最后的补充。
+        function detectLocale(candidates) {
+            var list = candidates;
+            if (!list) {
+                list = [];
+                try {
+                    if (typeof navigator !== 'undefined') {
+                        if (Array.isArray(navigator.languages)) list = list.concat(navigator.languages);
+                        if (navigator.language) list.push(navigator.language);
+                    }
+                } catch (e) {
+                    /* 非浏览器环境忽略 */
+                }
+                try {
+                    if (
+                        typeof document !== 'undefined' &&
+                        document.documentElement &&
+                        document.documentElement.lang
+                    ) {
+                        list.push(document.documentElement.lang);
+                    }
+                } catch (e) {
+                    /* 非浏览器环境忽略 */
+                }
+            }
+            for (var i = 0; i < list.length; i += 1) {
+                var hit = normalizeLocaleTag(list[i]);
+                if (hit) return hit;
+            }
+            // 全都认不出时回到插件的主语言（历史行为），而不是英文。
+            return 'zh';
+        }
+
+        // 语言服务已注册过旧的 whale-pet 词典时（HMR/热更新），新增键在旧词典里不存在，
+        // bind 会把键名原样返回。这里用本地词典兜底，避免配置页出现 secBalance 这类原始键名。
+        function translateOrFallback(t, active, key) {
+            var text = t ? t(key) : key;
+            if (typeof text === 'string' && text !== key) return text;
+            var locale = normalizeLocaleTag(active) || 'zh';
+            var fallback = LOCALES[locale] || LOCALES.zh;
+            return fallback[key] || LOCALES.en[key] || LOCALES.zh[key] || key;
+        }
+
+        // 翻译 hook：订阅 locale 变化重渲染，返回命名空间绑定的 t（无 locale 服务时按界面语言兜底）
         function useTranslate(locale) {
             var [, force] = useState(0);
             useEffect(() => {
-                if (!locale) return;
+                if (!locale || typeof locale.subscribe !== 'function') return;
                 return locale.subscribe(() => force((r) => r + 1));
             }, [locale]);
-            if (!locale) return (k) => LOCALES.zh[k] || k;
-            return locale.bind(SETTINGS_NS);
+            var active = detectLocale();
+            var bound = null;
+            if (locale && typeof locale.getSnapshot === 'function') {
+                var snapshot = null;
+                try {
+                    snapshot = locale.getSnapshot();
+                } catch (e) {
+                    snapshot = null;
+                }
+                if (snapshot && snapshot.active) active = snapshot.active;
+            }
+            if (locale && typeof locale.bind === 'function') {
+                try {
+                    bound = locale.bind(SETTINGS_NS);
+                } catch (e) {
+                    bound = null;
+                }
+            }
+            return (k) => translateOrFallback(bound, active, k);
+        }
+
+        // locale 服务桥：宿主按插件顺序装配，mount 时语言服务可能尚未就绪；一次性取值会
+        // 让整页永久停在兜底语言（用户切中文仍显示英文）。桥在运行时惰性解析服务，服务出现
+        // 后补注册词典并通知已渲染的组件重新取值；语言切换也走同一条订阅。
+        function createLocaleBridge(ctx) {
+            var service = null;
+            var unsubscribe = null;
+            var disposeDictionaries = null;
+            var listeners = new Set();
+            var scheduled = false;
+            var attempts = 0;
+            var destroyed = false;
+            function notify() {
+                listeners.forEach((fn) => fn());
+            }
+            function clearDictionaries() {
+                if (!disposeDictionaries) return;
+                try {
+                    disposeDictionaries();
+                } catch (e) {
+                    /* 已释放 */
+                }
+                disposeDictionaries = null;
+            }
+            function registerDictionaries() {
+                if (!service || typeof service.register !== 'function') return;
+                clearDictionaries();
+                try {
+                    disposeDictionaries = service.register(SETTINGS_NS, LOCALES);
+                    return;
+                } catch (e) {
+                    /* 整体注册失败：按语言逐个补齐（部分语言已注册时也能注册新增语言） */
+                }
+                var disposers = [];
+                Object.keys(LOCALES).forEach((lang) => {
+                    try {
+                        disposers.push(service.register(SETTINGS_NS, lang, LOCALES[lang]));
+                    } catch (e) {
+                        /* 该语言已注册：忽略 */
+                    }
+                });
+                disposeDictionaries = disposers.length
+                    ? () =>
+                          disposers.forEach((fn) => {
+                              try {
+                                  fn();
+                              } catch (e) {
+                                  /* 已释放 */
+                              }
+                          })
+                    : null;
+            }
+            function attach(next, silent) {
+                if (destroyed) return null;
+                if (next === undefined) {
+                    try {
+                        next = ctx.get('locale');
+                    } catch (e) {
+                        next = null;
+                    }
+                }
+                next = next || null;
+                if (next === service) return service;
+                if (unsubscribe) {
+                    try {
+                        unsubscribe();
+                    } catch (e) {
+                        /* 已释放 */
+                    }
+                    unsubscribe = null;
+                }
+                clearDictionaries();
+                service = next;
+                if (service) {
+                    if (typeof service.subscribe === 'function') {
+                        try {
+                            unsubscribe = service.subscribe(notify);
+                        } catch (e) {
+                            unsubscribe = null;
+                        }
+                    }
+                    registerDictionaries();
+                }
+                if (!silent) notify();
+                return service;
+            }
+            // 插件卸载时释放订阅与词典，避免热更新后旧词典占着命名空间、
+            // 新模块注册失败（宿主会一直用旧译文）。
+            function destroy() {
+                destroyed = true;
+                attempts = 32;
+                if (unsubscribe) {
+                    try {
+                        unsubscribe();
+                    } catch (e) {
+                        /* 已释放 */
+                    }
+                    unsubscribe = null;
+                }
+                clearDictionaries();
+                listeners.clear();
+                service = null;
+            }
+            // 服务晚于本插件就绪时（常见）用短轮询兜底：拿到服务即停，约 8s 后放弃。
+            function schedule() {
+                if (destroyed || scheduled || service || attempts >= 32) return;
+                attempts += 1;
+                scheduled = true;
+                setTimeout(() => {
+                    scheduled = false;
+                    if (service) return;
+                    if (!attach(undefined, false)) schedule();
+                }, 250);
+            }
+            return {
+                attach,
+                schedule,
+                destroy,
+                getService() {
+                    return service;
+                },
+                getSnapshot() {
+                    if (destroyed) return null;
+                    if (!service) {
+                        schedule();
+                        return null;
+                    }
+                    if (typeof service.getSnapshot !== 'function') return null;
+                    try {
+                        return service.getSnapshot();
+                    } catch (e) {
+                        return null;
+                    }
+                },
+                bind(ns) {
+                    if (destroyed) return null;
+                    if (!service) {
+                        schedule();
+                        return null;
+                    }
+                    if (typeof service.bind !== 'function') return null;
+                    try {
+                        return service.bind(ns);
+                    } catch (e) {
+                        return null;
+                    }
+                },
+                subscribe(fn) {
+                    listeners.add(fn);
+                    return () => listeners.delete(fn);
+                },
+            };
+        }
+
+        // 插件页行摘要：必须包成组件才能订阅 locale；直接返回字符串时，
+        // 切换到其他语言后摘要会停在旧语言，直到宿主重新挂载整行。
+        function SettingsSummary({ locale }) {
+            var t = useTranslate(locale);
+            return t('desc');
         }
 
         // ---- 图标 ----
@@ -6065,6 +6347,12 @@ window.__ModuleLoader__.load({
         }) {
             var behavior = draft.behavior || {};
             var customIds = custom && Array.isArray(custom.ids) ? custom.ids : [];
+            // 表单在场期间收起桌宠舞台：舞台是 fixed 覆盖层，命中层会拦下
+            // 配置页右侧列开关的点击（点不动/勾不上）。卸载时计数归零即恢复。
+            useEffect(() => {
+                enterSettingsPanel();
+                return leaveSettingsPanel;
+            }, []);
             var uploadInputRef = useRef(null);
             var [uploadState, setUploadState] = useState({ busy: false, message: null, error: false });
             // 系统"减少动态效果"偏好（响应式）：开启时交互动效被运行时强制关闭，
@@ -6845,7 +7133,7 @@ window.__ModuleLoader__.load({
             // 加载：describe → 找到 whale-pet 命名空间 → 合并为可编辑配置
             useEffect(() => {
                 if (!api || !api.settings) {
-                    setError(t('settingsUnavailable'));
+                    setError({ key: 'settingsUnavailable' });
                     return;
                 }
                 var cancelled = false;
@@ -6862,7 +7150,7 @@ window.__ModuleLoader__.load({
                         setError(null);
                     })
                     .catch(() => {
-                        if (!cancelled) setError(t('loadFailed'));
+                        if (!cancelled) setError({ key: 'loadFailed' });
                     });
                 return () => {
                     cancelled = true;
@@ -6915,7 +7203,7 @@ window.__ModuleLoader__.load({
                         setSavedAt(Date.now());
                         if (store) store.load();
                     })
-                    .catch((e) => setError(t('saveFailed') + ((e && e.message) || '?')))
+                    .catch((e) => setError({ key: 'saveFailed', detail: (e && e.message) || '?' }))
                     .finally(() => {
                         saveInFlightRef.current = false;
                         var queued = queuedSaveRef.current;
@@ -6937,6 +7225,8 @@ window.__ModuleLoader__.load({
 
             var unsaved =
                 !!draft && savedKeyRef.current !== null && savedKeyRef.current !== JSON.stringify(draft);
+            // 错误状态只保存翻译键：切换语言后错误文案也要跟着变，而不是停在旧语言。
+            var errorText = error ? t(error.key) + (error.detail || '') : null;
             if (!api || !api.settings) {
                 return h(SettingsForm, {
                     draft: mergeConfig(null),
@@ -6944,7 +7234,7 @@ window.__ModuleLoader__.load({
                     saving: false,
                     savedAt: 0,
                     unsaved: false,
-                    error: t('settingsUnavailable'),
+                    error: errorText || t('settingsUnavailable'),
                     open,
                     onToggle: toggleOpen,
                     bare,
@@ -6959,7 +7249,7 @@ window.__ModuleLoader__.load({
                     saving: false,
                     savedAt: 0,
                     unsaved: false,
-                    error: error || t('loading'),
+                    error: errorText || t('loading'),
                     open,
                     onToggle: toggleOpen,
                     bare,
@@ -6971,7 +7261,7 @@ window.__ModuleLoader__.load({
                 draft,
                 saving,
                 savedAt,
-                error,
+                error: errorText,
                 open,
                 unsaved,
                 t,
@@ -7135,12 +7425,35 @@ window.__ModuleLoader__.load({
                 subscribe: !!(api && api.subscribeActivity),
                 events: !!(api && api.events),
             });
-            // locale 服务（可选获取）：国际化字典注册（中/英）；缺失时回退中文
-            var locale = null;
+            // locale 服务（惰性桥接）：mount 时语言服务可能尚未就绪，注册与取值都要等
+            // 它出现；桥会补注册词典并通知组件重新渲染（见 createLocaleBridge）。
+            var locale = createLocaleBridge(ctx);
             try {
-                locale = ctx.get('locale');
+                locale.attach();
             } catch (e) {
-                console.error('[whale-pet] ctx.get(locale) failed:', e);
+                console.error('[whale-pet] locale attach failed:', e);
+            }
+            if (typeof ctx.effect === 'function') {
+                try {
+                    ctx.effect(() => () => locale.destroy(), 'whale-pet: locale bridge lifecycle');
+                } catch (e) {
+                    console.error('[whale-pet] locale effect failed:', e);
+                }
+            }
+            if (!locale.getService() && typeof ctx.inject === 'function') {
+                try {
+                    ctx.inject(['locale'], (ready) => {
+                        try {
+                            locale.attach(
+                                ready && typeof ready.get === 'function' ? ready.get('locale') : undefined
+                            );
+                        } catch (e) {
+                            console.error('[whale-pet] locale inject attach failed:', e);
+                        }
+                    });
+                } catch (e) {
+                    console.error('[whale-pet] ctx.inject(locale) failed:', e);
+                }
             }
             // layout：官方面板导航服务（0.2.x）。用它把"打开设置"退到插件主面板，
             // 避免在桌面端完全依赖 DOM 文本匹配。
@@ -7157,15 +7470,6 @@ window.__ModuleLoader__.load({
             } catch (e) {
                 uiWorkspace = null;
             }
-            if (locale) {
-                try {
-                    locale.register(SETTINGS_NS, LOCALES);
-                } catch (e) {
-                    console.error('[whale-pet] locale.register failed:', e);
-                }
-            }
-            // 非组件上下文的静态翻译（0.2.0 插件行 summary 用）；无 locale 时回退中文
-            var tStatic = locale ? locale.bind(SETTINGS_NS) : (k) => LOCALES.zh[k] || k;
             // 配置存储：加载设置命名空间 + 订阅热更新（宠物与设置卡片共享）
             var store = null;
             try {
@@ -7269,7 +7573,7 @@ window.__ModuleLoader__.load({
                     },
                     (ownerProps) =>
                         ownerProps && ownerProps.view === 'summary'
-                            ? tStatic('desc')
+                            ? h(SettingsSummary, { locale })
                             : h(SettingsCard, {
                                   ...ownerProps,
                                   api,
@@ -7339,6 +7643,15 @@ window.__ModuleLoader__.load({
             normalizeAnimId,
             animFacingTransform,
             LOCALES,
+            SUPPORTED_LOCALES,
+            detectLocale,
+            normalizeLocaleTag,
+            createLocaleBridge,
+            translateOrFallback,
+            settingsPanelOpen,
+            subscribeSettingsPanel,
+            enterSettingsPanel,
+            leaveSettingsPanel,
             SettingsForm,
             SettingsCard,
             ActionPicker,

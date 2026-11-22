@@ -20,7 +20,7 @@
 
 dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI 的开源鲸鱼桌宠插件。它会根据 Agent 的思考、编码、工具调用、等待和错误等状态自动切换动作，也支持点击回应、拖拽、屏幕漫游、自定义动画和触发规则。
 
-插件包含 **95 个 640×360 透明 WebM 动画**，提供中英文界面，设置修改后自动保存并热生效。
+插件包含 **95 个 640×360 透明 WebM 动画**，界面覆盖 Harness 内置的全部 8 种语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português），设置修改后自动保存并热生效。
 
 ## 功能预览
 
@@ -45,7 +45,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
     <td align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/balance-bubble.png" width="300" alt="账户余额气泡"><br><strong>账户余额气泡</strong></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/i18n.png" width="680" alt="中英文国际化界面"><br><strong>中英文界面</strong></td>
+    <td colspan="3" align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/i18n.png" width="680" alt="多语言界面"><br><strong>多语言界面（8 种语言）</strong></td>
   </tr>
 </table>
 
@@ -351,6 +351,8 @@ npm pack --dry-run
 - 自定义动作上传、预览和删除
 - 自定义事件触发规则
 
+设置页的标题、描述、行摘要和全部开关文案跟随 Harness 的界面语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português），切换语言后即时更新。
+
 所有设置会自动保存并即时生效，无需重启。
 
 ## 功能说明
@@ -424,7 +426,7 @@ npm pack --dry-run
 
 ## 动作配置
 
-完整内置动作见[动作展示](#动作展示)。动作选择器会跟随 Harness 语言显示中文或英文名称，并支持按分类、英文 ID 或中英文名称搜索；内置动作与用户上传动作都可以加入自主动作池、绑定事件意图或用于触发规则。
+完整内置动作见[动作展示](#动作展示)。动作选择器会跟随 Harness 语言显示对应语言的名称，并支持按分类、英文 ID 或中英文名称搜索；内置动作与用户上传动作都可以加入自主动作池、绑定事件意图或用于触发规则。
 
 ## 自定义动作
 

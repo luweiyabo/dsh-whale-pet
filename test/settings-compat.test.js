@@ -142,6 +142,27 @@ test('余额设置分区与授权开关能在表单中渲染', () => {
     assert.ok(text.includes('labelBalanceInterval'));
 });
 
+test('设置表单在场期间收起桌宠：计数广播、卸载后恢复', () => {
+    // 桌宠舞台是固定定位覆盖层，命中层会拦下配置页右侧列开关的点击；
+    // SettingsForm 挂载即进入「设置在场」，卸载即退出，WhalePet 据此收起舞台。
+    const I = loadClient().plugin.__internals;
+    const seen = [];
+    const off = I.subscribeSettingsPanel(() => seen.push(I.settingsPanelOpen()));
+    assert.equal(I.settingsPanelOpen(), false);
+    I.enterSettingsPanel();
+    assert.equal(I.settingsPanelOpen(), true);
+    I.leaveSettingsPanel();
+    assert.equal(I.settingsPanelOpen(), false);
+    assert.deepEqual(seen, [true, false]);
+    // 退订后不再收到广播；计数不为负（重复卸载不会卡在负数）
+    off();
+    I.leaveSettingsPanel();
+    I.enterSettingsPanel();
+    I.leaveSettingsPanel();
+    assert.equal(I.settingsPanelOpen(), false);
+    assert.deepEqual(seen, [true, false]);
+});
+
 test('鲸鱼卡片在官方默认卡片之后，与注册先后无关', () => {
     for (const whaleFirst of [true, false]) {
         const slots = new SlotCore();

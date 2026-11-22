@@ -32,11 +32,13 @@
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "lib",
     "assets",
+    "locale/*.json",
     "cordis.patch.yml",
     "README_EN.md",
     "THIRD_PARTY_ASSETS.md",

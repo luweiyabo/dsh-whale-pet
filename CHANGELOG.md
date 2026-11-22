@@ -12,6 +12,12 @@
 - 余额来源分层：DeepSeek 账户走 `remote.account.getBalance`（免 API key）；Kimi Coding / GLM Coding / Qwen / Xiaomi Token Plan / Codex / Copilot 识别为套餐，不查钱包；API-key 钱包必须显式授权后才解析 key。修复 `kimi-coding` 被旧推断当成 Moonshot 钱包、`deepseek-account` 被当成 API-key 钱包的隐患。
 - 低余额提醒：按币种阈值（默认 CNY 20 / USD 3）跨阈值提醒一次，充值后复位；复用回合提示的系统通知 / 提示音 / 卡片。刷新间隔可配，右键「刷新余额」强制查询。
 - 余额查询代理与超时诊断：复用 DSH `dsh-http-proxy` 全局代理，超时放宽到 12 s，错误区分为 network / timeout / tls，并提示 `HTTPS_PROXY`、`NODE_EXTRA_CA_CERTS` 与 SOCKS 限制。
+- 插件配置页国际化：插件页标题/描述与设置卡片内的所有字段、提示、错误、保存状态随 Harness 语言切换即时更新；覆盖 Harness 内置的 8 种语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português），95 个动作的名称与描述也全部本地化。
+
+### 修复
+
+- 中文 Harness 下插件界面显示英文：语言服务晚于插件就绪，旧实现把宿主静态的 `<html lang="en">` 当成界面语言并固定下来。现在改为惰性桥接语言服务（就绪后补注册词典并订阅语言切换），无语言服务时按运行环境语言兜底、认不出时回退中文。
+- 配置页开关被桌宠挡住：桌宠舞台是固定定位覆盖层，命中层会吃掉下方控件的点击，导致「显示余额」「日历感知」等右侧列开关点不动、勾不上。设置表单挂载期间现在收起桌宠舞台，离开配置页自动恢复；补了回归测试。
 
 ## [0.2.0] - 2026-11-16
 

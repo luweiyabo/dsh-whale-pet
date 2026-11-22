@@ -20,7 +20,7 @@ Bring the whale girl into DeepSeek Harness: react to agent activity, respond to 
 
 dsh-whale-pet is an open-source desktop-pet plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI. It reacts to agent thinking, coding, tool calls, waiting states, and errors. It also supports click reactions, dragging, screen roaming, custom animations, and event-triggered rules.
 
-The package includes **95 transparent 640×360 WebM animations**, a Chinese and English interface, and settings that save automatically and take effect immediately.
+The package includes **95 transparent 640×360 WebM animations**, an interface in all eight languages Harness ships (Chinese, English, Japanese, Spanish, French, German, Russian, Portuguese), and settings that save automatically and take effect immediately.
 
 ## Preview
 
@@ -45,7 +45,7 @@ The package includes **95 transparent 640×360 WebM animations**, a Chinese and 
     <td align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/balance-bubble.png" width="300" alt="Account balance bubble"><br><strong>Balance bubble</strong></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/i18n.png" width="680" alt="Chinese and English interface"><br><strong>Chinese and English UI</strong></td>
+    <td colspan="3" align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/i18n.png" width="680" alt="Multilingual interface"><br><strong>Multilingual UI (8 languages)</strong></td>
   </tr>
 </table>
 
@@ -238,7 +238,7 @@ Get notified when a turn finishes, fails, or waits for your approval/answer. Whe
 
 ## Action configuration
 
-See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README.md#动作展示) for all built-in actions. The action selector follows the Harness language and shows Chinese or English names, with search by category, English ID, or name; both built-in and user-uploaded actions can join autonomous pools, bind to event intents, or be used in trigger rules.
+See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README.md#动作展示) for all built-in actions. The action selector follows the Harness language and shows names in the current UI language, with search by category, English ID, or name; both built-in and user-uploaded actions can join autonomous pools, bind to event intents, or be used in trigger rules.
 
 ## Custom actions
 
@@ -267,6 +267,8 @@ Before uploading, the video metadata is read and possible problems are flagged: 
 ## Configuration and data
 
 Settings are stored in the DSH `whale-pet` namespace. Custom animations are stored in `$DSH_HOME/whale-pet/actions/`. The plugin does not upload animations, settings, or API keys to the project maintainer.
+
+The settings page title, description, row summary, and all field copy follow the Harness UI language (all eight languages) and update immediately when the language changes.
 
 | Environment variable | Purpose |
 |---|---|
