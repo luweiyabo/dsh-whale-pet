@@ -7,6 +7,7 @@
 The original source code in this project is licensed under the MIT License in the repository-root [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE).
 That MIT License does not apply to animation media under `assets/thumb/` that was obtained from the upstream project.
 The directory also contains animations created by this project; the upstream asset terms described here apply only to assets actually sourced from upstream.
+In addition, `assets/thumb/poster/idle.png` and the static frames under `assets/thumb/static/**` (webp) are first frames extracted from those animations; they are derivative assets and the same upstream terms apply.
 
 ## Animation Assets
 

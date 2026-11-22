@@ -57,11 +57,13 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 
 | Item | Requirement |
 |---|---|
-| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2` (developer preview; Web profile) |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2 \|\| ^0.2.2-rc.1` (developer preview; Web profile) |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-Plugin `0.1.3` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2`: `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances still come from official provider endpoints; missing credentials produce a query failure.
+Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.3`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances still come from official provider endpoints; missing credentials produce a query failure (the last known balance is kept and labelled with its time).
+
+**Platform note**: transparent WebM relies on VP9 alpha, which works in Chromium-based browsers and Firefox. Safari and every browser on iOS (all WebKit) render transparent video on a black box, so the pet switches to static frames automatically: actions still change, but there is no frame-by-frame motion.
 
 ### Install from npm
 
@@ -149,16 +151,17 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 | Double-click the pet | Plays the “Blue Whale Appears” special animation and clears selection |
 | Drag and bounce | Moves and places the pet; squash-and-stretch follows drag speed, and a quick throw starts the “Turn Into a Ball” animation at its ball-shaped frame and continues with momentum; the character bounds bounce off screen edges, collisions add a Q-style squash when interactive effects are enabled; momentum is disabled when Reduce Motion is enabled |
 | Drag fully off-screen | Enters edge-hidden mode; move the pointer to that screen edge to reveal the recall handle |
-| Right-click | Opens shortcuts for Home, Settings, and Hide |
+| Right-click | Opens shortcuts for Home, This turn, Settings, and Hide |
 
 ### Settings
 
-Open **Settings → Plugins → Whale Pet** to configure:
+Open **Settings → Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
 
 - Visibility, text bubbles, and account-balance bubbles
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
 - Pet size, default corner, and session-awareness scope
 - Quiet, balanced, or lively autonomous activity
+- Calendar awareness (master switch) plus festival and seasonal action toggles (those animations only appear in their window)
 - Animations for working, coding, reading, researching, thinking, waiting, listening, and error states
 - Autonomous, movement, and click-reaction pools
 - Custom action upload, preview, and deletion
@@ -193,6 +196,10 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Double-buffered video crossfades
 - Interactive effects layer: cursor tilt-follow (rAF spring), click bounce, drag squash-and-stretch, and bouncy squash during coasting/bounces, globally toggleable
 - Support for `prefers-reduced-motion`
+- Calendar awareness: festival animations appear only around their dates (Gregorian and Chinese lunar, resolved via the system Chinese calendar); seasonal animations only in their season, each toggleable
+- A static transparent first-frame poster covers cold starts until the first video is ready
+- Background tabs pause playback and balance polling; only one pet per browser (other tabs step aside)
+- The dragged position is remembered across reloads, restarts, and hide/show cycles (right-click Home clears it)
 
 ### Custom trigger rules
 
@@ -201,6 +208,7 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Configurable priority, cooldown, and hold duration
 - Test-trigger action and last-triggered status
 - Shared priority arbitration with built-in intents
+- New `time` (`HH:MM`, local) and `dayOfWeek` (`0` = Sunday) conditions plus greater-than / less-than operators for work-hours and weekend rules
 
 ### Account-balance bubble
 
@@ -238,6 +246,8 @@ Recommended format:
 
 Uploaded actions appear under the “Custom” category and can be added to autonomous pools, assigned to intents, or selected by trigger rules.
 
+Before uploading, the video metadata is read and possible problems are flagged: MP4 has no alpha channel (black background), non-16:9 framing (misaligned footprint and hit box), longer than 15 s, or unreadable metadata. These are advisory only and never block the upload.
+
 ## Configuration and data
 
 Settings are stored in the DSH `whale-pet` namespace. Custom animations are stored in `$DSH_HOME/whale-pet/actions/`. The plugin does not upload animations, settings, or API keys to the project maintainer.
@@ -269,6 +279,37 @@ Move the pointer to the screen edge where it disappeared. You can also enable it
 <summary><strong>The balance bubble says unsupported or failed</strong></summary>
 
 Check whether the current model provider exposes a public balance API and whether the relevant Harness credential or environment variable is configured. Unsupported providers fall back safely.
+
+</details>
+
+<details>
+<summary><strong>My custom action plays with a black background</strong></summary>
+
+MP4 (H.264) has no alpha channel, so the pet renders as a black box. Use a WebM with alpha (VP9 + `yuva420p`) instead — the upload warning reports the same reason.
+
+</details>
+
+<details>
+<summary><strong>Right-click → Settings does nothing in the desktop app</strong></summary>
+
+Both platforms behave the same: the pet uses the official layout API to open the Plugins panel and
+then clicks the Configure control on its own row (the host labels it `Configure <name>`), which opens the
+plugin configuration page directly. If another detail page is open, it goes back to the list first. Only
+when that fails does it show a hint. Older 0.1.x shells keep the legacy Settings → Plugins path.
+
+</details>
+
+<details>
+<summary><strong>Why is there only one pet when I open several DSH tabs?</strong></summary>
+
+The plugin keeps a single instance with a `localStorage` heartbeat: only the tab holding it renders the pet, other tabs stand by (their settings card still works). After the leading tab closes or reloads, another tab takes over within seconds.
+
+</details>
+
+<details>
+<summary><strong>Why is the pet static in Safari?</strong></summary>
+
+Safari (and every browser on iOS) runs on WebKit, which ignores the VP9 alpha channel and shows the video on a black box. When the plugin detects such an environment it uses a still frame extracted from each animation: the black box is gone, but only static poses remain. Use a Chromium-based browser or the desktop app for frame-by-frame animation.
 
 </details>
 

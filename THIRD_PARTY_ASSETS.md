@@ -7,6 +7,7 @@
 本项目的原创源代码使用仓库根目录 [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE) 中的 MIT License。
 该 MIT 授权不适用于 `assets/thumb/` 中实际从上游项目取得的动画媒体资源。
 该目录也包含本项目制作的动画；本说明中的上游资源条款仅适用于取自上游的部分。
+此外，`assets/thumb/poster/idle.png` 与 `assets/thumb/static/**` 下的静态帧图（webp）都是从这些动画抽取的首帧，属于派生资源，同样适用上游条款。
 
 ## 动画资源
 

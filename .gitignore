@@ -7,3 +7,9 @@ node_modules/
 *.log
 .vscode/
 .DS_Store
+
+# Internal tooling artifacts (session hook-state, ledgers, reports)
+.mimosa/
+
+# awesome-dsh submission checkout (local only, ~80 MB)
+.awesome-dsh-plugin-submit/

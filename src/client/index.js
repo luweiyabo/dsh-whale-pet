@@ -303,6 +303,7 @@ window.__ModuleLoader__.load({
             setCustomAnims,
             animEntry,
             animUrl,
+            staticFrameUrl,
             animName,
             animDescription,
             localizedAnimName,
@@ -593,6 +594,149 @@ window.__ModuleLoader__.load({
         // ============================================================================
         // 首帧海报（带 alpha 的 PNG，由待机动画首帧导出）
         var POSTER_URL = '/whale-pet/poster/idle.png';
+        // ---- 透明视频降级（Safari / iOS WebKit）----
+        // WebKit 不认 VP9 的 alpha 通道：webm 只会被渲染成黑底方块。检测到这类
+        // 环境时改用预生成的静态帧（每段动画抽首帧导出成 webp，见
+        // assets/thumb/static/），动作切换、气泡、拖拽照旧，只是没有逐帧运动。
+        var STATIC_ONCE_SEC = 3.2; // 静态模式下"一次性动作"回落到行为链的时长（秒）
+        /** 是否是"不认 VP9-alpha"的 WebKit 环境（纯函数，便于单测） */
+        function isWebKitWithoutAlpha(ua) {
+            var s = typeof ua === 'string' ? ua : '';
+            if (!s) return false;
+            if (!/AppleWebKit/i.test(s)) return false; // 非 WebKit 内核
+            // 只有"真 Chromium / Gecko"才排除；iOS 上的 CriOS / FxiOS / EdgiOS / OPiOS
+            // 都是 WebKit 套壳，同样会把透明视频渲染成黑底，不能排除。
+            if (/Chrome|Chromium|Edg\/|OPR\/|Firefox|Android/i.test(s)) return false;
+            return true; // 桌面 Safari 与 iOS 上的全部浏览器
+        }
+        /** 当前环境是否需要静态帧降级 */
+        function detectStaticFallback() {
+            if (typeof navigator === 'undefined') return false;
+            return isWebKitWithoutAlpha(navigator.userAgent);
+        }
+        /**
+         * 伪造一份"视频元素"给 startDrive 用：它只读 duration 与 currentTime，
+         * 其余只碰 style/classList（静态层没有真实媒体）。
+         */
+        function createStaticElement() {
+            var startedAt = Date.now();
+            return {
+                duration: MOVE_FALLBACK_DURATION,
+                style: {},
+                classList: {
+                    add() {},
+                    remove() {},
+                    contains() {
+                        return false;
+                    },
+                },
+                pause() {},
+                play() {
+                    return Promise.resolve();
+                },
+                get currentTime() {
+                    return (Date.now() - startedAt) / 1000;
+                },
+            };
+        }
+        /**
+         * 静态播放层：与 useVideoLayer 同签名（anim, once, onReady）。
+         * - 只把"当前动画"写进 state，由 <img src> 切换静态帧
+         * - onReady 立刻回调（带伪造元素），让移动驱动照常跑
+         * - once 动画靠定时器推进行为链：有未完成的移动计划时等满一个移动时长，
+         *   否则用一个短停顿，避免一次性动作把行为链挂死
+         */
+        function useStaticLayer(endedRef, hasPendingMove) {
+            var [anim, setAnim] = useState(null);
+            var stateRef = useRef({ timer: null });
+            var play = useCallback(
+                (next, once, onReady) => {
+                    var st = stateRef.current;
+                    if (st.timer) {
+                        clearTimeout(st.timer);
+                        st.timer = null;
+                    }
+                    setAnim(next);
+                    if (onReady) {
+                        var el = createStaticElement();
+                        var run = () => onReady(el);
+                        if (typeof queueMicrotask === 'function') queueMicrotask(run);
+                        else setTimeout(run, 0);
+                    }
+                    if (once) {
+                        var holdSec =
+                            hasPendingMove && hasPendingMove() ? MOVE_FALLBACK_DURATION : STATIC_ONCE_SEC;
+                        st.timer = setTimeout(() => {
+                            st.timer = null;
+                            if (endedRef.current) endedRef.current();
+                        }, holdSec * 1000);
+                    }
+                },
+                [endedRef, hasPendingMove]
+            );
+            useEffect(
+                () => () => {
+                    if (stateRef.current.timer) clearTimeout(stateRef.current.timer);
+                },
+                []
+            );
+            return { play: play, anim: anim };
+        }
+        // ---- 余额查询的失败退避与"上次值"文案（纯函数，便于单测）----
+        var BALANCE_FRESH_MS = 30000; // 正常轮询间隔
+        var BALANCE_RETRY_LADDER_MS = [5000, 15000, 60000, 300000]; // 连续失败的退避阶梯
+        /** 第 n 次失败后等待多久再试（超出阶梯上限按最后一档） */
+        function balanceRetryDelay(failures) {
+            var n = Math.max(1, Math.floor(Number(failures) || 1));
+            var idx = Math.min(n, BALANCE_RETRY_LADDER_MS.length) - 1;
+            return BALANCE_RETRY_LADDER_MS[idx];
+        }
+        /**
+         * 现在是否该发余额请求。
+         * - 从没查过（at=0）→ 立刻查
+         * - 上次成功过 → 按正常间隔
+         * - 连续失败 → 按退避阶梯，避免把上游和宿主都打满
+         */
+        function balanceDue(mb, now) {
+            if (!mb || !Number.isFinite(mb.at) || mb.at <= 0) return true;
+            var since = now - mb.at;
+            if (since < 0) return false;
+            if (mb.failures > 0) return since >= balanceRetryDelay(mb.failures);
+            return since >= BALANCE_FRESH_MS;
+        }
+        /** 余额金额文案：US$ 12.34 · CNY 88.00 */
+        function meterAmountText(balances) {
+            if (!Array.isArray(balances) || !balances.length) return '';
+            return balances.map((item) => item.currency + ' ' + item.total).join(' · ');
+        }
+        /** 时间戳 → 本地 HH:MM（不用 locale API，避免不同宿主输出不一致） */
+        function formatClock(ts) {
+            var n = Number(ts);
+            if (!Number.isFinite(n) || n <= 0) return '';
+            var d = new Date(n);
+            var hh = String(d.getHours()).padStart(2, '0');
+            var mm = String(d.getMinutes()).padStart(2, '0');
+            return hh + ':' + mm;
+        }
+        /**
+         * 余额气泡文案。
+         * 关键：查询失败但手里还有上一次的成功值时，继续展示那个值并标注时间，
+         * 而不是把气泡清成"查询失败"——失败不该让人看不到余额。
+         * labels: { balance, waiting, unsupported, failed, stale }
+         */
+        function formatMeterText(mb, labels) {
+            var head = labels.balance + (mb.providerLabel ? mb.providerLabel + ' · ' : '');
+            if (mb.status === 'unsupported') return head + labels.unsupported;
+            if (mb.status === 'waiting') return head + labels.waiting;
+            var amount = meterAmountText(mb.balances);
+            if (!amount) return head + labels.failed;
+            var text = head + amount;
+            if (mb.status === 'error') {
+                var clock = formatClock(mb.updatedAt);
+                text += ' ' + (clock ? labels.stale.replace('{time}', clock) : labels.failed);
+            }
+            return text;
+        }
         // 页面是否可见（把 document 访问收敛到一处，SSR/无 DOM 环境安全）
         function pageVisible() {
             return typeof document === 'undefined' || document.visibilityState !== 'hidden';
@@ -1224,6 +1368,8 @@ window.__ModuleLoader__.load({
             }, [hidePoster]);
             // 标签页主从：非主标签不渲染宠物（避免多只 + 事件订阅翻倍）
             var isLeader = useLeaderTab();
+            // 静态帧降级：只在 Safari / iOS WebKit 上为 true（一次判定，运行期不变）
+            var staticMode = useState(detectStaticFallback)[0];
             // 页面可见性：后台标签页暂停视频与余额轮询
             var docVisible = useDocumentVisible();
 
@@ -1288,7 +1434,14 @@ window.__ModuleLoader__.load({
             // 余额气泡只展示服务商官方接口返回的金额，不进行本地费用估算。
             // 金额保持字符串形式，避免浮点转换造成精度损失。
             var currentModelRef = useRef({ route: null, model: null });
-            var meterBalanceRef = useRef({ at: 0, status: 'waiting', providerLabel: null, balances: null });
+            var meterBalanceRef = useRef({
+                at: 0,
+                status: 'waiting',
+                providerLabel: null,
+                balances: null,
+                failures: 0,
+                updatedAt: 0,
+            });
             // 当前回合统计：{ startedAt, endedAt, tools, usage, last }
             // usage 来自感知层 onUsage（真实 token），tools 来自 onToolCall，用于
             // 右键「本轮统计」气泡；也是后续"完成提示"的数据源。
@@ -1303,18 +1456,13 @@ window.__ModuleLoader__.load({
             var showMeterBubble = useCallback(() => {
                 var c = cfgRef.current;
                 if (!c || c.meter === false) return;
-                var mb = meterBalanceRef.current;
-                var amount =
-                    mb.status === 'waiting'
-                        ? tPet('meterWaiting')
-                        : mb.status === 'unsupported'
-                          ? tPet('meterUnsupported')
-                          : mb.status === 'error'
-                            ? tPet('meterFailed')
-                            : mb.balances
-                              ? mb.balances.map((item) => item.currency + ' ' + item.total).join(' · ')
-                              : '…';
-                var text = tPet('meterBalance') + (mb.providerLabel ? mb.providerLabel + ' · ' : '') + amount;
+                var text = formatMeterText(meterBalanceRef.current, {
+                    balance: tPet('meterBalance'),
+                    waiting: tPet('meterWaiting'),
+                    unsupported: tPet('meterUnsupported'),
+                    failed: tPet('meterFailed'),
+                    stale: tPet('meterStale'),
+                });
                 // 常驻气泡：sticky=true，不自动消失
                 setBubble({ text: text, seq: Date.now(), sticky: true });
             }, []);
@@ -1328,7 +1476,7 @@ window.__ModuleLoader__.load({
                 var target = currentModelRef.current;
                 if (!target.route) return;
                 var now = Date.now();
-                if (now - mb.at < 30000) return;
+                if (!balanceDue(mb, now)) return;
                 mb.at = now;
                 var query =
                     '?route=' +
@@ -1341,25 +1489,30 @@ window.__ModuleLoader__.load({
                         if (meterBalanceRef.current !== mb) return;
                         if (d && d.ok && Array.isArray(d.balances) && d.balances.length) {
                             mb.status = 'ready';
+                            mb.failures = 0;
                             mb.providerLabel = d.providerLabel || d.provider || target.route;
                             mb.balances = d.balances;
+                            mb.updatedAt = now;
                             showMeterBubble(); // 余额到了，刷新常驻气泡
                         } else if (d && d.unsupported) {
                             mb.status = 'unsupported';
+                            mb.failures = 0;
                             mb.providerLabel = d.route || target.route;
                             showMeterBubble();
                         } else {
+                            // 未配 key / 接口报错：保留上次成功值，按退避阶梯重试
                             mb.status = 'error';
-                            mb.at = now - 25000; // 失败（未配 key/接口错误）：5s 后可重试
+                            mb.failures = (mb.failures || 0) + 1;
+                            mb.at = now;
                             showMeterBubble();
                         }
                     })
                     .catch(() => {
-                        mb.at = now - 25000;
-                        if (meterBalanceRef.current === mb) {
-                            mb.status = 'error';
-                            showMeterBubble();
-                        }
+                        if (meterBalanceRef.current !== mb) return;
+                        mb.status = 'error';
+                        mb.failures = (mb.failures || 0) + 1;
+                        mb.at = now;
+                        showMeterBubble();
                     });
             }, []);
 
@@ -1377,6 +1530,8 @@ window.__ModuleLoader__.load({
                         status: 'loading',
                         providerLabel: route,
                         balances: null,
+                        failures: 0,
+                        updatedAt: 0,
                     };
                     if (cfgRef.current && cfgRef.current.meter) {
                         showMeterBubble();
@@ -1474,8 +1629,11 @@ window.__ModuleLoader__.load({
                 pickNext();
             };
 
-            // ---- 双缓冲层 ----
-            var play = useVideoLayer(videoARef, videoBRef, endedRef);
+            // ---- 双缓冲层（Safari/iOS 上换成静态帧层，签名一致）----
+            var videoPlay = useVideoLayer(videoARef, videoBRef, endedRef);
+            var staticLayer = useStaticLayer(endedRef, () => !!pendingMoveRef.current);
+            var play = staticMode ? staticLayer.play : videoPlay;
+            var staticAnim = staticLayer.anim;
 
             // ---- 情境化动作池：节日/季节动画只在应景时间出现在随机池 ----
             // calendar.enabled=false 时原样返回（保持旧行为）；过滤后为空则回退原池
@@ -2824,6 +2982,13 @@ window.__ModuleLoader__.load({
                         : {};
 
             // 两个 video 共用的 props（纯播放属性，交互交给命中层）
+            // ---- 静态降级提示：Safari / iOS 上解释一次为什么宠物不动 ----
+            useEffect(() => {
+                if (!staticMode) return;
+                var timer = setTimeout(() => showBubble(tPet('staticFallbackHint')), 1600);
+                return () => clearTimeout(timer);
+            }, [staticMode, showBubble]);
+
             var commonVideoProps = {
                 muted: true,
                 playsInline: true,
@@ -2911,29 +3076,44 @@ window.__ModuleLoader__.load({
                                                 'wp-settle'
                                             );
                                         },
-                                        children: [
-                                            posterOn &&
-                                                h('img', {
-                                                    className: 'wp-poster',
-                                                    src: POSTER_URL,
-                                                    alt: '',
-                                                    draggable: false,
-                                                }),
-                                            h(
-                                                'video',
-                                                Object.assign({}, commonVideoProps, {
-                                                    ref: videoARef,
-                                                    className: 'wp-video is-front',
-                                                })
-                                            ),
-                                            h(
-                                                'video',
-                                                Object.assign({}, commonVideoProps, {
-                                                    ref: videoBRef,
-                                                    className: 'wp-video',
-                                                })
-                                            ),
-                                        ],
+                                        children: staticMode
+                                            ? [
+                                                  h('img', {
+                                                      className: 'wp-video is-front',
+                                                      src: staticFrameUrl(staticAnim || IDLE),
+                                                      alt: '',
+                                                      draggable: false,
+                                                      // 极旧 WebKit 不认 webp：退回带 alpha 的 PNG 海报
+                                                      onError: (e) => {
+                                                          var el = e.currentTarget;
+                                                          if (el.getAttribute('src') !== POSTER_URL)
+                                                              el.setAttribute('src', POSTER_URL);
+                                                      },
+                                                  }),
+                                              ]
+                                            : [
+                                                  posterOn &&
+                                                      h('img', {
+                                                          className: 'wp-poster',
+                                                          src: POSTER_URL,
+                                                          alt: '',
+                                                          draggable: false,
+                                                      }),
+                                                  h(
+                                                      'video',
+                                                      Object.assign({}, commonVideoProps, {
+                                                          ref: videoARef,
+                                                          className: 'wp-video is-front',
+                                                      })
+                                                  ),
+                                                  h(
+                                                      'video',
+                                                      Object.assign({}, commonVideoProps, {
+                                                          ref: videoBRef,
+                                                          className: 'wp-video',
+                                                      })
+                                                  ),
+                                              ],
                                     }),
                                 ],
                             }),
@@ -3106,6 +3286,8 @@ window.__ModuleLoader__.load({
                 meterWaiting: '等待模型调用…',
                 meterUnsupported: '当前服务商暂不支持',
                 meterFailed: '查询失败',
+                meterStale: '（上次 {time}，刷新失败）',
+                staticFallbackHint: '这个浏览器不支持透明视频，已改用静态形象（动作仍会切换）',
                 // 交互增强
                 menuLabel: '宠物菜单',
                 menuHome: '回家',
@@ -3325,6 +3507,9 @@ window.__ModuleLoader__.load({
                 meterWaiting: 'Waiting for a model call…',
                 meterUnsupported: 'Provider not supported',
                 meterFailed: 'Query failed',
+                meterStale: '(last {time}, refresh failed)',
+                staticFallbackHint:
+                    'This browser cannot render transparent video, so static poses are used instead (actions still switch)',
                 // 交互增强
                 menuLabel: 'Pet menu',
                 menuHome: 'Go home',
@@ -5611,6 +5796,16 @@ window.__ModuleLoader__.load({
             ANIM_BY_ID,
             ANIM_BY_NAME,
             animUrl,
+            staticFrameUrl,
+            staticFrameFallbackUrl: POSTER_URL,
+            isWebKitWithoutAlpha,
+            detectStaticFallback,
+            STATIC_ONCE_SEC,
+            balanceDue,
+            balanceRetryDelay,
+            formatMeterText,
+            meterAmountText,
+            formatClock,
             animName,
             normalizeAnimId,
             animFacingTransform,

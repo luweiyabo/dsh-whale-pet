@@ -943,6 +943,14 @@ export function createAnimationCatalog() {
                   encodeURIComponent(String(c.mtime || 0))
             : '';
     };
+    // 静态帧 URL：Safari / iOS 这类不认 VP9-alpha 的环境改用抽帧图
+    // （assets/thumb/static/<分类>/<id>.webp）。自定义动作没有对应的静态帧，
+    // 回退到待机首帧海报；未知 id 同理。
+    var staticFrameUrl = (id) => {
+        var a = ANIM_BY_ID[id];
+        if (!a) return '/whale-pet/poster/idle.png';
+        return '/whale-pet/static/' + a.category + '/' + a.id + '.webp';
+    };
     // id → 显示名（UI 用）；自定义动作显示文件名；未知 id 原样返回
     var animName = (id) => {
         var a = ANIM_BY_ID[id];
@@ -980,6 +988,7 @@ export function createAnimationCatalog() {
         setCustomAnims,
         animEntry,
         animUrl,
+        staticFrameUrl,
         animName,
         animDescription,
         localizedAnimName,
