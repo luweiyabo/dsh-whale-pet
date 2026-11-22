@@ -97,6 +97,14 @@ test('余额配置默认值与合并：坏类型回落、阈值逐币种覆盖',
     assert.deepEqual(bad.balance.thresholds, { CNY: 20, USD: 3 });
 });
 
+test('日历感知常开：旧配置里的关闭值在合并时归一为开启', () => {
+    // 0.3 起配置页不再提供这三个开关，行为始终开启；旧配置的 false 必须被忽略。
+    const legacy = mergeConfig({ calendar: { enabled: false, festival: false, seasonal: false } });
+    assert.deepEqual(legacy.calendar, { enabled: true, festival: true, seasonal: true });
+    const defaults = mergeConfig();
+    assert.deepEqual(defaults.calendar, { enabled: true, festival: true, seasonal: true });
+});
+
 test('客户端意图默认值与宿主默认值一致', () => {
     assert.deepEqual(mergeConfig().intents, {
         working: ['eating_tokens'],

@@ -16,13 +16,15 @@ test('位置字段默认未设置（-1）且接受 0-1 的比例坐标', () => {
     assert.throws(() => schema({ posY: -2 }));
 });
 
-test('日历开关默认开启，可单独关闭', () => {
+test('日历字段保留用于兼容旧配置（默认开启，schema 仍接受旧值）', () => {
     const schema = buildSettingsSchema(z);
     const defaults = schema({});
     assert.deepEqual(defaults.calendar, { enabled: true, festival: true, seasonal: true });
-    const off = schema({ calendar: { enabled: true, festival: false, seasonal: false } });
-    assert.equal(off.calendar.festival, false);
-    assert.equal(off.calendar.seasonal, false);
+    // 旧配置里的关闭值仍能通过 schema 校验；客户端 mergeConfig 会统一归一为开启，
+    // 配置页也不再暴露这三个开关。
+    const legacyOff = schema({ calendar: { enabled: true, festival: false, seasonal: false } });
+    assert.equal(legacyOff.calendar.festival, false);
+    assert.equal(legacyOff.calendar.seasonal, false);
 });
 
 test('旧配置（无 posX/calendar）仍可通过校验并补默认值', () => {

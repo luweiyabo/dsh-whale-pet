@@ -519,3 +519,79 @@ test('系统通知发送端在三种失败下都返回 false（调用方降级�
     });
     assert.equal(throwing.send({ title: 'x' }), false);
 });
+
+// ---- 子代理会话不提示 -----------------------------------------------------
+// 宿主把子代理做成独立子会话，它们各自发 turn/end / 审批帧。子代理完成属于
+// 实现细节，不该弹完成提示；但宠物动作照旧（父回合还在跑）。
+
+test('子代理会话：只喂宠物动作，不派发提示与统计', () => {
+    const seen = [];
+    const states = [];
+    const system = createActivitySystem({ normalizeAnimId: (x) => x });
+    const api = {
+        subscribeActivity(emit) {
+            emit({
+                type: 'session/event',
+                sessionId: 'child',
+                event: { type: 'turn/end', seq: 4, data: { turn: 1, reason: { kind: 'completed' } } },
+            });
+            emit({ type: 'approval/requested', sessionId: 'child' });
+            emit({
+                type: 'session/event',
+                sessionId: 'main',
+                event: { type: 'turn/end', seq: 5, data: { turn: 2, reason: { kind: 'completed' } } },
+            });
+            return () => {};
+        },
+    };
+    const stop = system.startActivitySensor(api, (state) => states.push(state), {
+        isSubagentSession: (id) => id === 'child',
+        onNotify: (frame) => seen.push(['notify', frame.sessionId]),
+        onTurn: (info) => seen.push(['turn', info.sessionId, info.seq]),
+        onUsage: (usage, sessionId) => seen.push(['usage', sessionId]),
+    });
+    assert.deepEqual(
+        seen,
+        [
+            ['notify', 'main'],
+            ['turn', 'main', 5],
+        ],
+        '子代理会话的完成/审批帧不能进提示与统计'
+    );
+    assert.ok(states.length >= 2, '子代理回合仍要驱动宠物动作');
+    stop();
+});
+
+test('子代理会话判定缺失或抛错时按普通会话处理（不吞提示）', () => {
+    const seen = [];
+    const system = createActivitySystem({ normalizeAnimId: (x) => x });
+    const frame = {
+        type: 'session/event',
+        sessionId: 's1',
+        event: { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } },
+    };
+    const run = (opts) => {
+        seen.length = 0;
+        const api = {
+            subscribeActivity(emit) {
+                emit(frame);
+                return () => {};
+            },
+        };
+        const stop = system.startActivitySensor(api, () => {}, {
+            onTurn: (info) => seen.push(['turn', info.sessionId]),
+            ...opts,
+        });
+        stop();
+        return seen.slice();
+    };
+    assert.deepEqual(
+        run({
+            isSubagentSession: () => {
+                throw new Error('目录未就绪');
+            },
+        }),
+        [['turn', 's1']]
+    );
+    assert.deepEqual(run({}), [['turn', 's1']]);
+});

@@ -153,3 +153,41 @@ test('会话 follow 只恢复未结束回合，转发实时事件并在断线后
     assert.ok(frames.some((frame) => frame.type === 'host/agent-error'));
     assert.ok(frames.some((frame) => frame.type === 'approval/requested' && frame.snapshot));
 });
+
+// ---- 子代理（subagent）会话判定 -------------------------------------------
+// 宿主把子代理实现成独立的子会话：它们会出现在会话列表里（flattenLineage 按
+// parentId 缩进）、各自发 turn/end，但绝不是用户正在对话的会话，完成时不该提示。
+
+test('子代理会话判定：列表行 origin=subagent 即子代理，普通会话不受影响', () => {
+    const list = observable({
+        current: 's1',
+        ids: ['s1', 'child'],
+        byId: {
+            s1: { running: false },
+            child: { running: true, origin: 'subagent', parentId: 's1' },
+        },
+    });
+    const api = resolveHostApi({ rpc: { call() {} } }, { sessions: { list }, remote: { session: {} } });
+    assert.equal(api.isSubagentSession('s1'), false, '普通会话不是子代理');
+    assert.equal(api.isSubagentSession('child'), true, '子代理会话必须被认出来');
+    assert.equal(api.isSubagentSession(''), false);
+    assert.equal(api.isSubagentSession(undefined), false);
+});
+
+test('子代理会话判定：列表行缺 origin 时回落到 sessions.subagentAddress', () => {
+    const list = observable({ current: 's1', ids: ['s1'], byId: { s1: { running: false } } });
+    const sessions = {
+        list,
+        // 宿主子代理目录派生：子代理刚结束、列表行还没带 origin 时仍能认出来
+        subagentAddress: (id) =>
+            id === 'ghost' ? { parentSessionId: 's1', childSessionId: 'ghost', mode: 'one-shot' } : undefined,
+    };
+    const api = resolveHostApi({ rpc: { call() {} } }, { sessions, remote: { session: {} } });
+    assert.equal(api.isSubagentSession('ghost'), true);
+    assert.equal(api.isSubagentSession('s1'), false);
+});
+
+test('子代理会话判定：没有 sessions 服务（旧宿主）时不暴露该方法', () => {
+    const api = resolveHostApi({ rpc: { call() {} } }, { remote: { session: {} } });
+    assert.equal(api.isSubagentSession, undefined);
+});

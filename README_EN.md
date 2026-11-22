@@ -161,7 +161,7 @@ Open **Settings → Plugins → Whale Pet** (or right-click the pet and pick "Se
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
 - Pet size, default corner, and session-awareness scope
 - Quiet, balanced, or lively autonomous activity
-- Calendar awareness (master switch) plus festival and seasonal action toggles (those animations only appear in their window)
+- Calendar awareness (always on): festival and seasonal animations only appear in their window
 - Animations for working, coding, reading, researching, thinking, waiting, listening, and error states
 - Autonomous, movement, and click-reaction pools
 - Custom action upload, preview, and deletion
@@ -196,7 +196,7 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Double-buffered video crossfades
 - Interactive effects layer: cursor tilt-follow (rAF spring), click bounce, drag squash-and-stretch, and bouncy squash during coasting/bounces, globally toggleable
 - Support for `prefers-reduced-motion`
-- Calendar awareness: festival animations appear only around their dates (Gregorian and Chinese lunar, resolved via the system Chinese calendar); seasonal animations only in their season, each toggleable
+- Calendar awareness (always on): festival animations appear only around their dates (Gregorian and Chinese lunar, resolved via the system Chinese calendar); seasonal animations only in their season
 - A static transparent first-frame poster covers cold starts until the first video is ready
 - Background tabs pause playback and balance polling; only one pet per browser (other tabs step aside)
 - The dragged position is remembered across reloads, restarts, and hide/show cycles (right-click Home clears it)
@@ -234,6 +234,7 @@ Get notified when a turn finishes, fails, or waits for your approval/answer. Whe
 - Page unfocused/minimized: system notification on Windows, macOS, and Linux (grant browser permission once on the Web; none needed in Desktop)
 - No system notification available: a short chime plus a `●` title marker, and the card is shown when you return
 - Settings page “Turn notifications”: five switches for completion, failure, needs-input, system notifications, and the chime
+- Subagent sessions never notify: a subagent is a separate child session, so its completion/failure only drives pet animations — no bubble, system notification, or chime
 - Background sessions are watched regardless of the activity scope, so switching away does not lose the completion
 
 ## Action configuration

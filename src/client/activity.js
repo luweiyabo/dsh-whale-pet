@@ -621,6 +621,44 @@ export function createActivitySystem({ normalizeAnimId }) {
                 publish();
             }
         };
+        // 子代理（subagent）会话：宿主把子代理做成独立的子会话，它们会出现在会话
+        // 列表里、各自发 turn/end 与审批帧 —— 但「用户在对话的会话」只有父会话。
+        // 这里只把它们喂给宠物动作，通知与统计一律跳过。
+        // 判定要查宿主会话目录，按会话缓存（同一会话的判定不会变）。
+        var subagentCache = new Map();
+        var isSubagentSession = (sessionId) => {
+            if (!opts.isSubagentSession || !sessionId) return false;
+            if (subagentCache.has(sessionId)) return subagentCache.get(sessionId);
+            var value = false;
+            try {
+                value = opts.isSubagentSession(sessionId) === true;
+            } catch (e) {
+                value = false;
+            }
+            if (subagentCache.size > 200) subagentCache.clear();
+            subagentCache.set(sessionId, value);
+            return value;
+        };
+        // 只有这些帧会影响提示/统计；assistant/chunk 之类的高频帧不付判定成本
+        var NOTIFY_RELEVANT_EVENTS = {
+            'turn/start': true,
+            'turn/end': true,
+            'assistant/message': true,
+            'tool/call': true,
+            'approval/asked': true,
+            'approval/decided': true,
+        };
+        var notifyRelevant = (frame) => {
+            if (frame.type !== 'session/event')
+                return (
+                    frame.type === 'approval/requested' ||
+                    frame.type === 'approval/resolved' ||
+                    frame.type === 'question/requested' ||
+                    frame.type === 'question/resolved'
+                );
+            var ev = frame.event || {};
+            return NOTIFY_RELEVANT_EVENTS[ev.type] === true;
+        };
         var handle = (raw) => {
             // 解包 RpcRequest：api.events 流 yield 的是 { rpcId, payload: Frame }，
             // 业务字段（type/sessionId/event）都在 payload 里。
@@ -635,8 +673,10 @@ export function createActivitySystem({ normalizeAnimId }) {
             }
             // 通知与统计：不受感知范围（scope）限制——后台会话的完成提示依赖它。
             // 这里先记账与派发，后面 filter 只影响意图/规则/余额这些"宠物行为"。
-            if (opts.onNotify) opts.onNotify(frame);
-            if (frame.type === 'session/event' && !frame.snapshot) {
+            // 子代理会话（subagent）的回合属于实现细节：跳过提示与统计，动作照常。
+            var subagent = notifyRelevant(frame) && isSubagentSession(frame.sessionId);
+            if (opts.onNotify && !subagent) opts.onNotify(frame);
+            if (!subagent && frame.type === 'session/event' && !frame.snapshot) {
                 var ev0 = frame.event || {};
                 if (opts.onUsage && ev0.type === 'assistant/message' && ev0.data && ev0.data.usage)
                     opts.onUsage(ev0.data.usage, frame.sessionId);

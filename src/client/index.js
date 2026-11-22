@@ -312,6 +312,12 @@ window.__ModuleLoader__.load({
             '.wp-sf-toggleItem>.wp-sf-checkbox{flex:none;margin-top:2px}.wp-sf-toggleText{display:flex;flex-direction:column;gap:4px;min-width:0;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:500}.wp-sf-toggleTitle{white-space:nowrap;line-height:1.5}.wp-sf-toggleHint{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;line-height:1.45}',
             // 被系统偏好暂时接管（如减少动态效果时禁用的开关）：整卡降透明度
             '.wp-sf-toggleSuspended{opacity:.55}.wp-sf-toggleSuspended>.wp-sf-checkbox{cursor:default}',
+            // 配置页加载态：表单结构保留但不可交互，避免把默认值误当成真实配置去点
+            '.wp-sf-loadingText{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.6}',
+            '.wp-sf-loading .wp-sf-body{pointer-events:none;opacity:.6}',
+            // 插件页（bare）没有折叠卡片页头：自动保存状态与错误显示在表单顶部
+            '.wp-sf-statusRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 2px;min-height:19px}',
+            '.wp-sf-statusRow>.wp-sf-error{margin:0}',
             '.wp-sf-settingGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}',
             '.wp-sf-settingItem{display:grid;grid-template-rows:minmax(46px,auto) 38px;gap:8px;box-sizing:border-box;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px;min-width:0}',
             '.wp-sf-settingLabel{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0;font-weight:500}.wp-sf-settingTitle{white-space:nowrap;line-height:1.5}.wp-sf-settingHint{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;line-height:1.4}',
@@ -932,14 +938,14 @@ window.__ModuleLoader__.load({
             return leader;
         }
 
-        // ---- 打开宿主设置：桌面端与网页端共用同一条链路 ----
-        // 0.2.x 的桌面端与网页端把设置做成"侧栏底部的设置按钮 → 模态对话框"，
-        // 宿主没有公开的"打开设置"服务：layout.selectPanel() 只接受 main 面板。
-        // 因此按三层降级：
-        //   1) `[data-slot="sidebar.settings"]` 里的模态触发器 —— 槽位渲染出的
-        //      稳定锚点，不随 CSS Module 哈希或界面语言变化（桌面端正是缺这层才失败）；
-        //   2) 模态里点"插件"分组并展开本插件卡片（0.1.x / 旧壳）；
-        //   3) 都找不到 → 用官方 layout 面板接口切到"插件"主面板并高亮本插件行。
+        // ---- 打开本插件的配置页：桌面端与网页端共用同一条链路 ----
+        // 0.2.x 的配置页在「插件」主面板里本插件行上的「配置」按钮后面。宿主没有
+        // 公开的"打开设置"方法，但提供两条官方导航（都要在点击时现取，桌面端
+        // 启动顺序不同，挂载时可能还没就绪）：
+        //   1) pluginNavigation.openBundle(包名) —— 插件管理器的跨插件导航；
+        //   2) layout.selectPanel('plugins') —— 切到「插件」主面板。
+        // 打开面板后按「行标题/包名」定位「查看 → 配置」，语言无关。
+        // 0.1.x 旧壳没有这两个服务，才退回侧栏设置槽位（且绝不点账号菜单）。
         var PACKAGE_NAME = '@luweiyabo/dsh-whale-pet';
         /** 取元素的可见文本（无障碍名优先），用于跨语言的兜底定位 */
         function readableText(el) {
@@ -1102,7 +1108,8 @@ window.__ModuleLoader__.load({
             // 拖拽后的自由位置（视口比例 0-1；-1 = 未设置 → 回落到 position 角落）
             posX: -1,
             posY: -1,
-            // 日历感知：节日/季节动画只在应景时间出现在随机动作池（可关）
+            // 日历感知：节日/季节动画只在应景时间出现在随机动作池。
+            // 0.3 起常开（配置页不再提供开关），字段保留用于兼容旧配置。
             calendar: { enabled: true, festival: true, seasonal: true },
             // 回合完成提示：三个事件开关 + 系统通知/提示音两条通道
             notify: { ...DEFAULT_NOTIFY },
@@ -1148,12 +1155,9 @@ window.__ModuleLoader__.load({
             if (user.scope === 'current' || user.scope === 'any') c.scope = user.scope;
             if (typeof user.posX === 'number' && user.posX >= 0 && user.posX <= 1) c.posX = user.posX;
             if (typeof user.posY === 'number' && user.posY >= 0 && user.posY <= 1) c.posY = user.posY;
-            if (user.calendar && typeof user.calendar === 'object') {
-                for (var calKey in c.calendar) {
-                    if (typeof user.calendar[calKey] === 'boolean')
-                        c.calendar[calKey] = user.calendar[calKey];
-                }
-            }
+            // 日历感知（节日/四季动作）已改为常开：忽略旧配置里的 calendar.* 开关，
+            // 统一归一到开启状态；下次保存设置时磁盘上的旧值也会被改写。
+            c.calendar = { enabled: true, festival: true, seasonal: true };
             if (user.notify && typeof user.notify === 'object') {
                 for (var notiKey in c.notify) {
                     if (typeof user.notify[notiKey] === 'boolean') c.notify[notiKey] = user.notify[notiKey];
@@ -1456,6 +1460,7 @@ window.__ModuleLoader__.load({
             customStore,
             ruleRuntime,
             layout,
+            getHostService,
             useSessions,
             uiWorkspace,
             openSession,
@@ -1502,6 +1507,9 @@ window.__ModuleLoader__.load({
             }, [menu]);
             var cfgRef = useRef(cfg);
             cfgRef.current = cfg;
+            // api 可能晚于组件挂载才就绪：用 ref 让长期闭包读到最新值
+            var apiRef = useRef(api);
+            apiRef.current = api;
             // 仲裁/感知参数引用（渲染时同步，effect 内动态读取 → 保存即生效不重建流）
             var arbOptsRef = useRef({ debounceMs: 500, lingerMs: 1500, errorHoldMs: 3000, ruleMeta: {} });
             var bNow = (cfg && cfg.behavior) || DEFAULT_CONFIG.behavior;
@@ -1607,6 +1615,9 @@ window.__ModuleLoader__.load({
             }, [hidePoster]);
             // 标签页主从：非主标签不渲染宠物（避免多只 + 事件订阅翻倍）
             var isLeader = useLeaderTab();
+            // 设置/插件配置页在场：跨 React root 的共享 store（配置卡片挂载时置位）。
+            // 收起整个桌宠层（舞台 + 通知栈），避免 fixed 覆盖层挡住配置页控件。
+            var settingsPanelVisible = useSettingsPanelOpen();
             // 静态帧降级：只在 Safari / iOS WebKit 上为 true（一次判定，运行期不变）
             var staticMode = useState(detectStaticFallback)[0];
             // 页面可见性：后台标签页暂停视频与余额轮询
@@ -1824,6 +1835,27 @@ window.__ModuleLoader__.load({
             var enqueueNotify = useCallback(
                 (entry) => {
                     if (!entry || NOTIFY_KINDS.indexOf(entry.kind) === -1) return;
+                    // 双保险：子代理（subagent）会话的任何提示都不弹（感知层已过滤）。
+                    // 用 ref 读当前 api，避免 useCallback 闭包拿到旧值。
+                    try {
+                        var apiNow = apiRef.current;
+                        if (
+                            entry.sessionId &&
+                            apiNow &&
+                            typeof apiNow.isSubagentSession === 'function' &&
+                            apiNow.isSubagentSession(entry.sessionId)
+                        ) {
+                            postDebug({
+                                event: 'notify-skip',
+                                reason: 'subagent',
+                                kind: entry.kind,
+                                sessionId: entry.sessionId,
+                            });
+                            return;
+                        }
+                    } catch (e) {
+                        /* 判定失败按普通会话处理 */
+                    }
                     if (entry.kind === 'waiting' && entry.sessionId) {
                         var lastWait = waitingNotifyRef.current.get(entry.sessionId);
                         if (lastWait !== undefined && Date.now() - lastWait < 15000) return;
@@ -2599,21 +2631,22 @@ window.__ModuleLoader__.load({
                 if (c && (c.meter || (c.balance && c.balance.alert))) refreshBalance();
             }, [docVisible]);
 
-            // ---- 显示开关恢复（false→true）：visible=false 时组件 return null 卸载了
-            // 两个 <video>，重新开启后元素是新建的（src 为空）；此时 playing 未变，
-            // 上面的播放 effect 不会重跑，需在此重新加载当前动画。 ----
-            var prevVisibleRef = useRef(true);
+            // ---- 桌宠层恢复：visible=false 或设置页在场时组件 return null，
+            // 两个 <video> 被卸载；恢复后元素是新建的（src 为空），而 playing 未变、
+            // 上面的播放 effect 不会重跑，宠物就会「透明只剩气泡」，点一下才复现。
+            // 这里统一处理两种收起方式：重新显示时补加载当前动画。 ----
+            var prevHiddenRef = useRef(true);
             useEffect(() => {
-                var visibleNow = !cfg || cfg.visible !== false;
-                var was = prevVisibleRef.current;
-                prevVisibleRef.current = visibleNow;
-                if (visibleNow && !was) {
+                var hiddenNow = (cfg && cfg.visible === false) || settingsPanelVisible;
+                var was = prevHiddenRef.current;
+                prevHiddenRef.current = hiddenNow;
+                if (!hiddenNow && was) {
                     play(playing.anim, playing.once, (el) => {
                         el.style.transform = animFacingTransform(playing.anim, facingRef.current);
                         if (pendingMoveRef.current) startDrive(el);
                     });
                 }
-            }, [cfg && cfg.visible, playing]);
+            }, [cfg && cfg.visible, settingsPanelVisible, playing]);
 
             // ---- 事件感知 + 意图仲裁（感知层 → 决策层 → 播放器） ----
             // 有 api（connection 服务）才接入；缺失时退化为纯自主链桌宠。
@@ -2714,6 +2747,18 @@ window.__ModuleLoader__.load({
                 });
                 var stop = startActivitySensor(api, (state) => arbiter.update(state.active), {
                     scope: cfgRef.current?.scope,
+                    // 子代理（subagent）会话只喂宠物动作：完成/失败/审批都不提示
+                    isSubagentSession: (sessionId) => {
+                        try {
+                            return !!(
+                                api &&
+                                typeof api.isSubagentSession === 'function' &&
+                                api.isSubagentSession(sessionId)
+                            );
+                        } catch (e) {
+                            return false;
+                        }
+                    },
                     errorHoldMs: () => arbOptsRef.current.errorHoldMs,
                     // 触发规则：读取器模式（cfgRef 动态读，设置自动保存即热生效）
                     rules: () => (cfgRef.current && cfgRef.current.rules) || [],
@@ -3841,52 +3886,86 @@ window.__ModuleLoader__.load({
             };
 
             // 打开本插件的配置页（"图1"）：0.2.x 里这一页在「插件」主面板中，
-            // 由插件行上的「配置」按钮打开（aria-label = `配置 <名称>`）。
-            // 宿主没有公开的"打开设置/打开插件页"服务，所以：
-            //   1) 官方 layout 接口切到 plugins 主面板（网页端与桌面端都存在该 key）；
-            //   2) 在列表里找带 whale-pet 的「配置」按钮并点击；找到不到就退「查看」；
-            //   3) 若当前停在某个详情页（有"返回"按钮），先返回列表再找；
+            // 由插件行上的「配置」按钮打开。宿主没有公开的"打开设置"方法，因此：
+            //   1) pluginNavigation.openBundle(包名)（插件管理器的跨插件导航）；
+            //   2) 退化到 layout.selectPanel('plugins') 切到「插件」主面板；
+            //   3) 进入列表/详情后按「行标题/包名」点「查看」→「配置」；
             //   4) 全都失败才高亮本插件行 + 气泡提示。
-            var findRowButton = (pattern) => {
-                var nodes = document.querySelectorAll('button[aria-label]');
-                for (var i = 0; i < nodes.length; i += 1) {
-                    var label = nodes[i].getAttribute('aria-label') || '';
-                    if (label.indexOf('whale-pet') === -1) continue;
-                    if (pattern.test(label)) return nodes[i];
+            // 开关（启用/停用）与卸载按钮要排除：开关有 role=switch/aria-checked，
+            // 卸载按钮按各语言动词排除；其余名称匹配项就是「查看」/「配置」。
+            var ENABLE_LABEL = /(启用|Enable|Activar|Activer|Aktivieren|Включить|Ativar|有効化|开启)/i;
+            var UNINSTALL_LABEL =
+                /(卸载|Uninstall|Desinstalar|Désinstaller|Deinstallieren|Удалить|アンインストール)/i;
+            var serviceOf = (name) => {
+                if (typeof getHostService === 'function') {
+                    var service = getHostService(name);
+                    if (service) return service;
+                }
+                return name === 'layout' ? layout || null : null;
+            };
+            var findRowButton = () => {
+                // 行标题随语言变化，包名保持不变：两者都匹配（宿主的行标题来自
+                // 本插件的 locale/*.json，正常情况下与 tPet('title') 相同）。
+                var names = [PACKAGE_NAME, 'whale-pet', tPet('title')];
+                var buttons = document.querySelectorAll('button[aria-label]');
+                for (var i = 0; i < buttons.length; i += 1) {
+                    var button = buttons[i];
+                    if (button.offsetParent === null) continue;
+                    var label = button.getAttribute('aria-label') || '';
+                    var lower = label.toLowerCase();
+                    var matched = false;
+                    for (var j = 0; j < names.length && !matched; j += 1) {
+                        var name = String(names[j] || '').toLowerCase();
+                        if (name && lower.indexOf(name) !== -1) matched = true;
+                    }
+                    if (!matched) continue;
+                    if (button.getAttribute('role') === 'switch') continue;
+                    if (button.getAttribute('aria-checked') !== null) continue;
+                    if (UNINSTALL_LABEL.test(label) || ENABLE_LABEL.test(label)) continue;
+                    return button;
                 }
                 return null;
             };
             var goPetConfigPage = () => {
-                if (!layout || typeof layout.selectPanel !== 'function') return false;
-                try {
-                    layout.selectPanel('plugins');
-                } catch (e) {
-                    return false; // 面板未注册（更旧的壳）：交给 legacy 路径
+                var opened = false;
+                var navigation = serviceOf('pluginNavigation');
+                if (navigation && typeof navigation.openBundle === 'function') {
+                    try {
+                        navigation.openBundle(PACKAGE_NAME);
+                        opened = true;
+                    } catch (e) {
+                        opened = false;
+                    }
                 }
+                if (!opened) {
+                    var panel = serviceOf('layout');
+                    if (panel && typeof panel.selectPanel === 'function') {
+                        try {
+                            panel.selectPanel('plugins');
+                            opened = true;
+                        } catch (e) {
+                            opened = false; // 面板未注册（更旧的壳）：交给 legacy 路径
+                        }
+                    }
+                }
+                if (!opened) return false;
                 var attempts = 0;
+                var clicks = 0;
                 var step = () => {
                     attempts += 1;
-                    var configure = findRowButton(/^(配置|Configure|configur)/i);
-                    if (configure) {
-                        configure.click();
-                        return;
+                    if (document.querySelector('.wp-sf-section')) return; // 已到配置页
+                    // 列表页 →「查看」→ 包详情页 →「配置」：最多两次
+                    if (clicks < 2) {
+                        var button = findRowButton();
+                        if (button) {
+                            clicks += 1;
+                            button.click();
+                            setTimeout(step, 320);
+                            return;
+                        }
                     }
-                    var detail = findRowButton(/^(查看|View)/i);
-                    if (detail) {
-                        detail.click();
-                        return;
-                    }
-                    // 停在别的详情页：先返回列表（backToPackage / backToList）
-                    var back = document.querySelector(
-                        'button[aria-label^="返回"], button[aria-label^="Back"]'
-                    );
-                    if (back && attempts < 12) {
-                        back.click();
+                    if (attempts < 40) {
                         setTimeout(step, 150);
-                        return;
-                    }
-                    if (attempts < 20) {
-                        setTimeout(step, 120);
                         return;
                     }
                     var row = findPluginRow();
@@ -3896,19 +3975,19 @@ window.__ModuleLoader__.load({
                     }
                     showBubble(tPet('settingsRowHint'));
                 };
-                setTimeout(step, 120);
+                setTimeout(step, 150);
                 return true;
             };
 
             // 0.1.x（老壳）：只有"设置 → 插件"卡片这一条路，按槽位锚点 + 文本兜底
             var openSettingsLegacy = () => {
+                // 只认显式的设置-modal 触发器：账号菜单按钮（aria-haspopup=menu）
+                // 绝不能被当成设置入口——那正是桌面端误弹左下角菜单的原因。
                 var trigger =
                     document.querySelector(
                         '[data-slot="sidebar.settings"] button[aria-haspopup="dialog"], ' +
                             '[data-slot="sidebar.settings"] button'
-                    ) ||
-                    document.querySelector('.hHd-Xa_settingsArea button') ||
-                    findControlByText(document, ['设置', 'Settings'], false);
+                    ) || document.querySelector('.hHd-Xa_settingsArea button[aria-haspopup="dialog"]');
                 if (!trigger) {
                     showBubble(tPet('settingsHint'));
                     return;
@@ -4074,14 +4153,14 @@ window.__ModuleLoader__.load({
                 title: 'dsh-whale-pet',
             };
 
-            // 显示开关：visible=false 只隐藏桌宠 DOM；通知卡片独立渲染，不受影响
-            // （hooks 继续运行，重新开启时视频元素重建、状态保留在 refs 中）
-            // 设置表单在场时同样收起：舞台固定在页面之上，命中层会拦下配置页
-            // 控件的点击（右列开关正好落在人物范围内，点不动/勾不上）。
-            var settingsOpen = useSettingsPanelOpen();
-            var petVisible = !(cfg && cfg.visible === false) && !settingsOpen;
+            // 显示开关：visible=false 只隐藏桌宠 DOM（通知卡片保持独立，仍能收到完成提示）。
+            // hooks 继续运行，重新开启时视频重建、状态保留在 refs 中。
+            var petVisible = !(cfg && cfg.visible === false);
             // 非主标签不渲染宠物（设置卡仍在：两个标签都能改设置）
             if (!isLeader) return null;
+            // 设置/插件配置页在场：整个桌宠层一起收起（含通知卡片与气泡），
+            // 否则 fixed 覆盖层会挡住配置页右侧列开关，表现为「点不动/勾不上」。
+            if (settingsPanelVisible) return null;
 
             // 渲染树：root > stage > [fx > breathe > [video A, video B], 命中层]
             // fx 层承载 JS 指令式形变（倾斜/拖拽拉伸），breathe 层承载 CSS 动画
@@ -4409,12 +4488,6 @@ window.__ModuleLoader__.load({
                 labelFx: '交互动效',
                 hintFx: '光标倾斜跟随、点击弹跳与拖拽挤压（系统"减少动态效果"时自动关闭）',
                 hintFxSuspended: '系统已开启"减少动态效果"，动效暂时关闭',
-                labelCalendarEnabled: '日历感知',
-                hintCalendarEnabled: '按日期自动挑选节日与季节动作；关闭后全部动画随机出现',
-                labelCalendarFestival: '节日动作',
-                hintCalendarFestival: '只在节日前后播放节日动画（春节、中秋、万圣节等）',
-                labelCalendarSeasonal: '四季动作',
-                hintCalendarSeasonal: '只在对应季节播放四季动画（堆雪人／摇扇／落叶／风筝）',
                 // 回合完成提示
                 secBalance: '账户余额',
                 hintBalance: '先选来源（账户/套餐/钱包）；API-key 钱包只在显式授权后查询',
@@ -4694,15 +4767,6 @@ window.__ModuleLoader__.load({
                 labelFx: 'Interactive effects',
                 hintFx: 'Cursor tilt-follow, click bounce and drag squash (auto-disabled under reduced motion)',
                 hintFxSuspended: 'Suspended while the system "Reduce Motion" setting is on',
-                labelCalendarEnabled: 'Calendar awareness',
-                hintCalendarEnabled:
-                    'Pick festival and seasonal actions by date; when off, every animation is random',
-                labelCalendarFestival: 'Festival actions',
-                hintCalendarFestival:
-                    'Play festival animations only around their dates (Spring Festival, Mid-Autumn, Halloween…)',
-                labelCalendarSeasonal: 'Seasonal actions',
-                hintCalendarSeasonal:
-                    'Play seasonal animations only in their season (snowman / fan / leaves / kite)',
                 secBalance: 'Account balance',
                 hintBalance:
                     'Source first (account / plan / wallet); API-key wallets are queried only after explicit consent',
@@ -6344,15 +6408,11 @@ window.__ModuleLoader__.load({
             ruleUi,
             t,
             bare = false,
+            loading = false,
         }) {
             var behavior = draft.behavior || {};
             var customIds = custom && Array.isArray(custom.ids) ? custom.ids : [];
-            // 表单在场期间收起桌宠舞台：舞台是 fixed 覆盖层，命中层会拦下
-            // 配置页右侧列开关的点击（点不动/勾不上）。卸载时计数归零即恢复。
-            useEffect(() => {
-                enterSettingsPanel();
-                return leaveSettingsPanel;
-            }, []);
+            // 桌宠层收起由 SettingsCard 负责（覆盖加载中/读取失败状态）。
             var uploadInputRef = useRef(null);
             var [uploadState, setUploadState] = useState({ busy: false, message: null, error: false });
             // 系统"减少动态效果"偏好（响应式）：开启时交互动效被运行时强制关闭，
@@ -6632,41 +6692,6 @@ window.__ModuleLoader__.load({
                                 !!draft.fx && !reducedMotion,
                                 (e) => onPatch((d) => ({ ...d, fx: e.target.checked })),
                                 reducedMotion
-                            ),
-                            toggleItem(
-                                'calendarEnabled',
-                                t('labelCalendarEnabled'),
-                                t('hintCalendarEnabled'),
-                                !(draft.calendar && draft.calendar.enabled === false),
-                                (e) =>
-                                    onPatch((d) => ({
-                                        ...d,
-                                        calendar: { ...(d.calendar || {}), enabled: e.target.checked },
-                                    }))
-                            ),
-                            toggleItem(
-                                'calendarFestival',
-                                t('labelCalendarFestival'),
-                                t('hintCalendarFestival'),
-                                !!(draft.calendar && draft.calendar.festival),
-                                (e) =>
-                                    onPatch((d) => ({
-                                        ...d,
-                                        calendar: { ...(d.calendar || {}), festival: e.target.checked },
-                                    })),
-                                !!(draft.calendar && draft.calendar.enabled === false)
-                            ),
-                            toggleItem(
-                                'calendarSeasonal',
-                                t('labelCalendarSeasonal'),
-                                t('hintCalendarSeasonal'),
-                                !!(draft.calendar && draft.calendar.seasonal),
-                                (e) =>
-                                    onPatch((d) => ({
-                                        ...d,
-                                        calendar: { ...(d.calendar || {}), seasonal: e.target.checked },
-                                    })),
-                                !!(draft.calendar && draft.calendar.enabled === false)
                             ),
                         ],
                     }),
@@ -7040,20 +7065,45 @@ window.__ModuleLoader__.load({
                     })
                 ),
                 error &&
+                    !bare &&
                     h('div', {
                         className: 'wp-sf-footer',
                         children: [h('p', { className: 'wp-sf-error', role: 'status' }, error)],
                     }),
             ];
+            // 插件页（bare）没有折叠卡片页头：自动保存状态/错误改在表单顶部显示，
+            // 否则「已保存 / 等待保存 / 保存失败」完全不可见（错误要滚到底才知道）。
+            var statusBadges = [];
+            if (saving)
+                statusBadges.push(h('span', { className: 'wp-sf-badge', key: 'saving' }, t('saving')));
+            else if (unsaved)
+                statusBadges.push(h('span', { className: 'wp-sf-badge', key: 'unsaved' }, t('unsaved')));
+            else if (savedAt > 0)
+                statusBadges.push(h('span', { className: 'wp-sf-badge', key: 'saved' }, t('saved')));
+            var statusRow =
+                bare && (loading || statusBadges.length > 0 || error)
+                    ? h('div', {
+                          className: 'wp-sf-statusRow',
+                          role: 'status',
+                          children: [
+                              loading
+                                  ? h('span', { className: 'wp-sf-loadingText' }, error || t('loading'))
+                                  : null,
+                              loading ? null : statusBadges,
+                              !loading && error ? h('p', { className: 'wp-sf-error' }, error) : null,
+                          ],
+                      })
+                    : null;
+            if (bare && statusRow) bodyContent = [statusRow].concat(bodyContent);
             // bare（0.2.0 插件页的 page 视图）已自带页头，去掉折叠卡片外壳直接渲染表单。
             if (bare) {
                 return h('div', {
-                    className: 'wp-sf-card wp-sf-cardBare',
+                    className: 'wp-sf-card wp-sf-cardBare' + (loading ? ' wp-sf-loading' : ''),
                     children: [h('div', { className: 'wp-sf-body', children: bodyContent })],
                 });
             }
             return h('li', {
-                className: 'wp-sf-card' + (open ? ' wp-sf-cardOpen' : ''),
+                className: 'wp-sf-card' + (open ? ' wp-sf-cardOpen' : '') + (loading ? ' wp-sf-loading' : ''),
                 children: [
                     h('button', {
                         type: 'button',
@@ -7089,6 +7139,10 @@ window.__ModuleLoader__.load({
             var [saving, setSaving] = useState(false);
             var [savedAt, setSavedAt] = useState(0);
             var [error, setError] = useState(null);
+            // 加载阶段：loading（尚未读到配置）/ ready / failed（读取失败，重开页面可重试）。
+            // ready 之前不渲染可交互表单：旧实现用默认值渲染开关且 onPatch 为空，
+            // 用户点开关会闪一下又弹回，看起来像"勾选框坏了"。
+            var [loadPhase, setLoadPhase] = useState('loading');
             // bare（0.2.0 插件页 section）默认展开；0.1.x 官方设置卡片默认折叠。
             var [open, setOpen] = useState(bare);
             var toggleOpen = () => {
@@ -7096,6 +7150,13 @@ window.__ModuleLoader__.load({
                 if (!open && customStore) customStore.load();
             };
             var t = useTranslate(locale);
+            // 配置卡片在场期间收起整个桌宠层（含通知卡片）：舞台与通知栈都是 fixed
+            // 覆盖层，会拦下配置页右侧列开关的点击（点不动/勾不上）。放在卡片层，
+            // 加载中/读取失败也能罩住；卸载时计数归零即恢复。
+            useEffect(() => {
+                enterSettingsPanel();
+                return leaveSettingsPanel;
+            }, []);
             // 规则触发时间戳：订阅共享运行时（规则命中时传感器回调 notify）
             var [, ruleTick] = useState(0);
             useEffect(() => {
@@ -7114,6 +7175,10 @@ window.__ModuleLoader__.load({
             var savedKeyRef = useRef(null);
             var saveInFlightRef = useRef(false);
             var queuedSaveRef = useRef(null);
+            // 离开配置页/页面隐藏时补交：防抖窗口内的修改不能丢（否则切走再回来"回到原样"）
+            var draftRef = useRef(null);
+            var persistRef = useRef(null);
+            draftRef.current = draft;
             // 自定义动作清单：订阅 store，卡片打开/点刷新时重拉（文件增删同步）
             var [customActions, setCustomActions] = useState(
                 customStore ? customStore.get() : { actions: [], display: null }
@@ -7134,9 +7199,12 @@ window.__ModuleLoader__.load({
             useEffect(() => {
                 if (!api || !api.settings) {
                     setError({ key: 'settingsUnavailable' });
+                    setLoadPhase('failed');
                     return;
                 }
                 var cancelled = false;
+                setLoadPhase('loading');
+                setError(null);
                 api.settings
                     .describe({})
                     .then((res) => {
@@ -7144,20 +7212,30 @@ window.__ModuleLoader__.load({
                         var payload = res && res.result && res.result.ok ? res.result.value : null;
                         var list = (payload && payload.namespaces) || [];
                         var ns = list.find((n) => n.ns === SETTINGS_NS);
-                        var loaded = mergeConfig(ns ? ns.value : null);
+                        if (!ns) {
+                            // 读不到命名空间时不能拿默认值当"已加载"：否则用户一改动
+                            // 就会把真实配置覆盖成默认值。标记失败，重开页面可重试。
+                            setError({ key: 'loadFailed' });
+                            setLoadPhase('failed');
+                            return;
+                        }
+                        var loaded = mergeConfig(ns.value);
                         setDraft(loaded);
                         savedKeyRef.current = JSON.stringify(loaded);
                         setError(null);
+                        setLoadPhase('ready');
                     })
                     .catch(() => {
-                        if (!cancelled) setError({ key: 'loadFailed' });
+                        if (cancelled) return;
+                        setError({ key: 'loadFailed' });
+                        setLoadPhase('failed');
                     });
                 return () => {
                     cancelled = true;
                 };
             }, [api]);
 
-            // 表单修改后立即广播给桌宠；持久化仍保持下方 600ms 防抖与串行写入。
+            // 表单修改后立即广播给桌宠；持久化仍保持下方防抖与串行写入。
             useEffect(() => {
                 if (draft && store && store.set) store.set(draft);
             }, [draft, store]);
@@ -7212,6 +7290,7 @@ window.__ModuleLoader__.load({
                         else setSaving(false);
                     });
             };
+            persistRef.current = persistDraft;
             useEffect(() => {
                 if (!draft || savedKeyRef.current === null) return;
                 if (saveInFlightRef.current) {
@@ -7219,79 +7298,74 @@ window.__ModuleLoader__.load({
                     return;
                 }
                 if (JSON.stringify(draft) === savedKeyRef.current) return;
-                var timer = setTimeout(() => persistDraft(draft), 600);
+                var timer = setTimeout(() => persistDraft(draft), 300);
                 return () => clearTimeout(timer);
             }, [draft, api]);
+            // 离开配置页/页面隐藏/关闭：补交尚未落盘的修改。防抖计时器会在卸载时
+            // 被 clear，若用户改完很快切走，旧实现会把这次修改直接丢掉。
+            useEffect(() => {
+                var flush = () => {
+                    var latest = draftRef.current;
+                    if (!latest || savedKeyRef.current === null) return;
+                    if (JSON.stringify(latest) === savedKeyRef.current) return;
+                    if (typeof persistRef.current === 'function') persistRef.current(latest);
+                };
+                var onVisibility = () => {
+                    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') flush();
+                };
+                window.addEventListener('pagehide', flush);
+                if (typeof document !== 'undefined') {
+                    document.addEventListener('visibilitychange', onVisibility);
+                }
+                return () => {
+                    window.removeEventListener('pagehide', flush);
+                    if (typeof document !== 'undefined') {
+                        document.removeEventListener('visibilitychange', onVisibility);
+                    }
+                    flush();
+                };
+            }, []);
 
             var unsaved =
                 !!draft && savedKeyRef.current !== null && savedKeyRef.current !== JSON.stringify(draft);
             // 错误状态只保存翻译键：切换语言后错误文案也要跟着变，而不是停在旧语言。
             var errorText = error ? t(error.key) + (error.detail || '') : null;
-            if (!api || !api.settings) {
-                return h(SettingsForm, {
-                    draft: mergeConfig(null),
-                    onPatch: () => {},
-                    saving: false,
-                    savedAt: 0,
-                    unsaved: false,
-                    error: errorText || t('settingsUnavailable'),
-                    open,
-                    onToggle: toggleOpen,
-                    bare,
-                    ruleUi,
-                    t,
-                });
-            }
-            if (!draft) {
-                return h(SettingsForm, {
-                    draft: mergeConfig(null),
-                    onPatch: () => {},
-                    saving: false,
-                    savedAt: 0,
-                    unsaved: false,
-                    error: errorText || t('loading'),
-                    open,
-                    onToggle: toggleOpen,
-                    bare,
-                    ruleUi,
-                    t,
-                });
-            }
+            var loading = loadPhase !== 'ready';
             return h(SettingsForm, {
-                draft,
-                saving,
-                savedAt,
-                error: errorText,
+                draft: draft || mergeConfig(null),
+                saving: loading ? false : saving,
+                savedAt: loading ? 0 : savedAt,
+                error: loading ? errorText || t('loading') : errorText,
                 open,
-                unsaved,
+                unsaved: loading ? false : unsaved,
                 t,
                 bare,
+                loading,
                 ruleUi,
-                custom: {
-                    ids: ((customActions && customActions.actions) || []).map((a) => a.id),
-                    display: customActions && customActions.display,
-                    onRefresh: customStore
-                        ? function () {
+                custom: customStore
+                    ? {
+                          ids: ((customActions && customActions.actions) || []).map((a) => a.id),
+                          display: customActions && customActions.display,
+                          onRefresh: function () {
                               customStore.load();
-                          }
-                        : undefined,
-                    onUpload: customStore
-                        ? function (file) {
+                          },
+                          onUpload: function (file) {
                               return customStore.upload(file);
-                          }
-                        : undefined,
-                    onDelete: customStore
-                        ? function (id) {
+                          },
+                          onDelete: function (id) {
                               return customStore.remove(id);
-                          }
-                        : undefined,
-                },
-                onPatch: setDraft,
+                          },
+                      }
+                    : undefined,
+                onPatch: loading
+                    ? function () {
+                          /* 加载中：忽略修改，避免把默认值写进真实配置 */
+                      }
+                    : setDraft,
                 // 展开卡片时顺带刷新自定义动作清单（文件增删后重新打开即同步）
                 onToggle: toggleOpen,
             });
         }
-
         // ============================================================================
         // 插件主体（Cordis 插件三件套：name / inject / apply）
         // ============================================================================
@@ -7440,6 +7514,31 @@ window.__ModuleLoader__.load({
                     console.error('[whale-pet] locale effect failed:', e);
                 }
             }
+            // 宿主导航服务按需解析：桌面端启动顺序与网页端不同，挂载时
+            // layout/pluginNavigation 可能还没就绪；只在点击「打开设置」时现取。
+            var hostServices = {};
+            var resolveHostService = (name) => {
+                try {
+                    var service = ctx.get(name);
+                    if (service) hostServices[name] = service;
+                } catch (e) {
+                    /* 服务不可用时回落到已解析的实例 */
+                }
+                return hostServices[name] || null;
+            };
+            if (typeof ctx.inject === 'function') {
+                try {
+                    ctx.inject(['pluginNavigation'], (ready) => {
+                        try {
+                            hostServices.pluginNavigation = ready.get('pluginNavigation') || null;
+                        } catch (e) {
+                            /* 旧壳没有该服务 */
+                        }
+                    });
+                } catch (e) {
+                    /* 旧壳没有该服务 */
+                }
+            }
             if (!locale.getService() && typeof ctx.inject === 'function') {
                 try {
                     ctx.inject(['locale'], (ready) => {
@@ -7507,6 +7606,7 @@ window.__ModuleLoader__.load({
                             customStore,
                             ruleRuntime,
                             layout,
+                            getHostService: resolveHostService,
                             uiWorkspace,
                             openSession: (sessionId) => {
                                 // 点击时再解析服务：避免挂载期 ctx 未注入导致拿到 undefined；

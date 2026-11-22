@@ -99,6 +99,32 @@ export function resolveHostApi(connection, services = {}) {
     }
 
     const api = { settings };
+    // 子代理（subagent）会话判定：宿主把子代理实现成独立的子会话，它们会出现在
+    // 会话列表里（flattenLineage 按 parentId 缩进）、也会各自发 turn/end，
+    // 但「用户在对话的会话」只有父会话 —— 子代理完成不该弹任何提示。
+    // 依据两条，任一命中即算子代理：
+    //   1. 列表行 origin === 'subagent'（宿主 SessionSummary 的官方标记）；
+    //   2. sessions.subagentAddress(id)：按父会话的 subagentCatalog 派生（子代理
+    //      刚结束、目录尚未刷新时仍能认出来）。
+    // 注意不能用 parentId 判断：普通 fork 也会带 parentId。
+    if (sessions) {
+        api.isSubagentSession = (sessionId) => {
+            if (!sessionId) return false;
+            try {
+                if (typeof sessions.subagentAddress === 'function') {
+                    if (sessions.subagentAddress(sessionId) !== undefined) return true;
+                }
+            } catch {
+                // 旧宿主没有该方法：继续用列表行判定
+            }
+            try {
+                const row = sessions.list?.getSnapshot?.()?.byId?.[sessionId];
+                return !!(row && row.origin === 'subagent');
+            } catch {
+                return false;
+            }
+        };
+    }
     // account 余额走 Remote（账户登录态），不经过 API-key 路由；
     // 软获取失败时不暴露该方法，由宠物侧显示 account-unavailable。
     if (remoteAccount && typeof remoteAccount.getBalance === 'function') {
