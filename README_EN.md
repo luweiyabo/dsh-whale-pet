@@ -4,7 +4,7 @@
 
 # dsh-whale-pet
 
-Bring the whale girl into DeepSeek Harness: react to agent activity, respond to interaction, and roam around the screen.
+Bring the whale pet into DeepSeek Harness: react to agent activity, respond to interaction, and roam around the screen.
 
 [![npm version](https://img.shields.io/npm/v/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=npm)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
 [![npm downloads](https://img.shields.io/npm/dm/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=downloads)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
@@ -18,7 +18,7 @@ Bring the whale girl into DeepSeek Harness: react to agent activity, respond to 
 
 </div>
 
-dsh-whale-pet is an open-source desktop-pet plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI. It reacts to agent thinking, coding, tool calls, waiting states, and errors. It also supports click reactions, dragging, screen roaming, custom animations, and event-triggered rules.
+dsh-whale-pet is an open-source desktop-pet plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It reacts to agent thinking, coding, tool calls, waiting states, and errors. It also supports click reactions, dragging, screen roaming, custom animations, event-triggered rules, balance/quota lookup, and turn notifications.
 
 The package includes **95 transparent 640×360 WebM animations**, an interface in all eight languages Harness ships (Chinese, English, Japanese, Spanish, French, German, Russian, Portuguese), and settings that save automatically and take effect immediately.
 
@@ -61,9 +61,7 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.5`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances are layered by account / plan / API-key wallet: DeepSeek account needs no API key, plans do not query a wallet, and API-key wallets are queried by default (can be turned off in the config file); failures keep the last known balance labelled with its time.
-
-**Platform note**: transparent WebM relies on VP9 alpha, which works in Chromium-based browsers and Firefox. Safari and every browser on iOS (all WebKit) render transparent video on a black box, so the pet switches to static frames automatically: actions still change, but there is no frame-by-frame motion.
+The plugin loads as DSH's Web client; the Web and desktop apps share the same client. The commands below use the `web` profile.
 
 ### Install from npm
 
@@ -81,6 +79,18 @@ dsh plugin --profile web add github:luweiyabo/dsh-whale-pet
 ```
 
 Keep only one installation source in a Web profile. Before switching between the npm, GitHub, and local-checkout variants, uninstall the current variant; otherwise multiple packages declare the same `whale-pet` loader entry and DSH cannot start.
+
+### Install from desktop
+
+DSH Desktop keeps its own `desktop` profile, independent of the Web profile, and can install the plugin directly (only one installation source may exist in a profile):
+
+1. Open DSH Desktop and go to the **Plugins** page in the left sidebar.
+2. Click **Add plugin** and enter `@luweiyabo/dsh-whale-pet` under "Package name or address" (a GitHub repository address or local directory path also works).
+3. Enable it when prompted after installation; if DSH asks for a restart, fully quit and reopen DSH Desktop — the pet appears in the lower-right corner.
+
+The same Plugins page also updates, disables, and uninstalls installed plugins; restart when prompted after an update.
+
+> If the `dsh` CLI is installed, you can instead fully quit Desktop and run `dsh plugin --profile desktop add @luweiyabo/dsh-whale-pet` (the desktop profile must have been initialized once by launching the app).
 
 ### Install from a local checkout
 
@@ -104,7 +114,7 @@ Restart `dsh web` after uninstalling. User-uploaded actions remain in `$DSH_HOME
 
 ## Development
 
-Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, `notify.js` decides notification channels (bubble / system notification / chime), `balance-alert.js` owns money and balance/quota alert state, `schedule.js` owns calendar and usage formatting, `host-api.js` adapts to different hosts, and `index.js` owns the UI and player. Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH.
+Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, `notify.js` decides notification channels (bubble / system notification / chime), `balance-alert.js` owns money and balance/quota alert state, `schedule.js` owns calendar and usage formatting, `host-api.js` adapts to different hosts, and `index.js` owns the UI and player. The host side lives in `lib/index.js` (settings schema, asset routes, balance/quota queries) and `lib/balance-*.js` (source classification and wallet/quota parsing). Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH.
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
@@ -126,7 +136,10 @@ npm pack --dry-run
 
 The project uses DSH's split host/client plugin architecture:
 
-- [`lib/index.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/index.js): host-side settings, static animations, custom actions, and balance API
+- [`lib/index.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/index.js): host-side settings, static animations, custom actions, model API, and balance/quota API
+- [`lib/balance-source.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-source.js): balance-source classification and error diagnostics (host-side pure functions)
+- [`lib/balance-quota.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-quota.js): plan-quota queries for Codex / OpenCode Go / GLM Coding
+- [`lib/balance-providers.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-providers.js), [`lib/deepseek-balance.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/deepseek-balance.js): wallet balance endpoints and response parsing
 - [`lib/client.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/client.js): browser-side playback, interaction, intent arbitration, and settings UI
 - [`cordis.patch.yml`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/cordis.patch.yml): DSH bundle registration
 - [`assets/plugin-logo.png`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/assets/plugin-logo.png): plugin logo
@@ -151,23 +164,23 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 | Double-click the pet | Plays the “Blue Whale Appears” special animation and clears selection |
 | Drag and bounce | Moves and places the pet; squash-and-stretch follows drag speed, and a quick throw starts the “Turn Into a Ball” animation at its ball-shaped frame and continues with momentum; the character bounds bounce off screen edges, collisions add a Q-style squash when interactive effects are enabled; momentum is disabled when Reduce Motion is enabled |
 | Drag fully off-screen | Enters edge-hidden mode; move the pointer to that screen edge to reveal the recall handle |
-| Right-click | Opens shortcuts for Home, Refresh balance, Settings, and Hide; a “Back to finished session” entry appears for about 2 minutes after the latest done/needs-input notification |
+| Right-click | Opens shortcuts for Home, Refresh balance, Settings, and Hide; a “Back to finished session” entry appears for about 2 minutes after the latest done/needs-input bubble was shown in this page |
 
 ### Settings
 
-Open **Settings → Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
+Open **Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
 
-- Visibility, text bubbles, balance display, and balance alerts (the balance alert row exposes only one switch; thresholds, refresh interval, API-key permission, turn-end refresh, and weekly/monthly quota thresholds are config-file only)
+- Visibility, text bubbles, balance display, balance alerts, and turn notifications (balance alerts and turn notifications each have one switch; thresholds, refresh interval, API-key permission, turn-end refresh, and weekly/monthly quota thresholds are config-file only)
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
 - Pet size, default corner, and session-awareness scope
 - Quiet, balanced, or lively autonomous activity
-- Calendar awareness (always on): festival and seasonal animations are preferred only in their window; if the configured pool has no in-season animation, the full pool is used instead of an empty one
+- Calendar awareness (always enabled; no switch in the settings page): festival and seasonal animations are preferred only in their window; if the configured pool has no in-season animation, the full pool is used instead of an empty one
 - Animations for working, coding, reading, researching, thinking, waiting, listening, and error states
 - Autonomous, movement, and click-reaction pools
 - Custom action upload, preview, and deletion
 - Custom event-triggered rules
 
-Settings are saved automatically and applied without restarting.
+Changes made in the settings page are saved and applied automatically; balance parameters in the config file take effect after restarting DSH.
 
 ## Features
 
@@ -198,7 +211,7 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Support for `prefers-reduced-motion`
 - Calendar awareness (always on): festival animations appear only around their dates (Gregorian and Chinese lunar; leap months are handled correctly and the result is timezone-independent); seasonal animations only in their season. If the pool has no suitable animation, the full pool is used instead of an empty one
 - A static transparent first-frame poster covers cold starts until the first video is ready
-- Background tabs pause video playback and throttle balance/quota polling to a 5-minute floor (when balance alerts are on); only one pet per browser (other tabs step aside; when `localStorage` is unavailable, every tab shows a pet and no single-instance coordination happens)
+- Background tabs pause video playback; when balance alerts are on, balance/quota polling is throttled to a 5-minute floor, otherwise background polling stops; only one pet per browser (other tabs step aside; when `localStorage` is unavailable, every tab shows a pet and no single-instance coordination happens)
 - The dragged position is remembered across reloads, restarts, and hide/show cycles (right-click Home clears it)
 
 ### Custom trigger rules
@@ -208,15 +221,15 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Configurable priority, cooldown, and hold duration
 - Test-trigger action and last-triggered status
 - Shared priority arbitration with built-in intents
-- New `time` (`HH:MM`, local) and `dayOfWeek` (`0` = Sunday) conditions plus greater-than / less-than operators for work-hours and weekend rules
+- Local `time` (`HH:MM`) and `dayOfWeek` (`0` = Sunday) conditions plus greater-than / less-than operators for work-hours and weekend rules
 
 ### Account balance and low-balance alerts
 
-Enable `meter` to show the balance and `balance.alert` to be notified when the wallet or plan quota runs low. Sources are chosen in this order; API-key wallets are queried by default:
+Turn on **Show balance** to display the balance and **Balance alert** to be notified when the wallet or plan quota runs low. Sources are chosen in this order; API-key wallets are queried by default:
 
 - **DeepSeek account** (signed in): uses the DSH account service `remote.account.getBalance`; no API key. The amount is recharge + bonus.
-- **Plans / subscriptions** (Kimi Coding, GLM Coding, Qwen / Xiaomi Token Plan, ChatGPT Codex, GitHub Copilot, etc.): reports "plan/subscription billing — no wallet balance" and never queries a wallet or a key.
-- **Plan quota**: Codex reads local logs (5h/week; offline, no token); OpenCode Go queries its official endpoint (5h/week/month); GLM Coding CN and z.ai intl query their official endpoints (5h/week). When available, the bubble shows "5h 62% · week 31%" and the detail card shows bars plus reset countdowns. No fake numbers when an endpoint is unavailable. Only official provider baseURLs are used for quota; a custom baseURL is treated as unsupported and no key is sent. Quota reads use the API key by default; a weekly/monthly window alerts once when 5% or less remains, and the 5h window never alerts. Missing windows are not fabricated.
+- **Plans / subscriptions** (Kimi Coding, GLM Coding, Qwen / Xiaomi Token Plan, ChatGPT Codex, GitHub Copilot, etc.): reports "plan/subscription billing — no wallet balance" and never queries a wallet; see the plan-quota row below for quota queries.
+- **Plan quota**: Codex reads local logs (5h/week; reads local logs only, offline); OpenCode Go queries its official endpoint (5h/week/month); GLM Coding CN and z.ai intl query their official endpoints (5h/week). When available, the bubble shows "5h 62% · week 31%" and the detail card shows bars plus reset countdowns. No fake numbers when an endpoint is unavailable. Only official provider baseURLs are used for quota; a custom baseURL is treated as unsupported and no key is sent. Quota reads that access the network use the API key by default (Codex needs none); a weekly/monthly window alerts once when 5% or less remains, and the 5h window never alerts. Missing windows are not fabricated.
 - **API-key wallets** (DeepSeek / Moonshot / StepFun): queried by default. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed, and a custom baseURL is treated as unsupported with no key sent.
 
 Low-balance alerts:
@@ -228,7 +241,7 @@ Low-balance alerts:
 - Opening a session detects its model automatically and fetches the balance without waiting for a model request; the bubble shows "Detecting the session model…" while resolving.
 - Hover the balance bubble to expand the detail and move away to collapse it: source, currencies, and last update; changed amounts roll with reduced-motion support. Refresh and settings remain in the right-click menu.
 - Proxy: DSH reads `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at launch; the plugin uses plain `fetch` and never installs its own proxy. OS proxy settings are not read; SOCKS is unsupported; a TLS-intercepting proxy needs `NODE_EXTRA_CA_CERTS` before launch.
-- Token costs are not estimated. Low-balance alerts are on by default; Settings exposes only that switch, while the other balance parameters are editable in the profile `cordis.patch.yml` under `whale-pet.config.balance`: `thresholds.CNY/USD` (default 5 / 1), `refreshMs` (default 60000), `allowApiKey` (default true), `turnRefresh` (default true), `timeoutMs` (default 12000), `quotaAlert.weeklyPct/monthlyPct` (default 5) (restart to apply).
+- Low-balance alerts are on by default; among balance settings, only the balance-alert switch is exposed in the settings page, while the other parameters are editable in the profile `cordis.patch.yml` under `whale-pet.config.balance`: `thresholds.CNY/USD` (default 5 / 1), `refreshMs` (default 60000), `allowApiKey` (default true), `turnRefresh` (default true), `timeoutMs` (default 12000), `quotaAlert.weeklyPct/monthlyPct` (default 5) (restart to apply).
 
 ### Turn notifications
 
@@ -243,7 +256,7 @@ Get notified when a turn finishes, fails, or waits for your approval/answer. The
 
 ## Action configuration
 
-See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README.md#动作展示) for all built-in actions. The action selector follows the Harness language and shows names in the current UI language, with search by category, English ID, or name; both built-in and user-uploaded actions can join autonomous pools, bind to event intents, or be used in trigger rules.
+See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-whale-pet/blob/main/README.md#动作展示) for all built-in actions. The action selector follows the Harness language and shows names in the current UI language, with search by category, English ID, or name (current UI language, Chinese, and English are searched); both built-in and user-uploaded actions can join autonomous pools, bind to event intents, or be used in trigger rules.
 
 ## Custom actions
 
@@ -273,21 +286,27 @@ Before uploading, the video metadata is read and possible problems are flagged: 
 
 Settings are stored in the DSH `whale-pet` namespace. Custom animations are stored in `$DSH_HOME/whale-pet/actions/`. The plugin does not upload animations, settings, or API keys to the project maintainer.
 
-The settings page title, description, row summary, and all field copy follow the Harness UI language (all eight languages) and update immediately when the language changes.
+The settings page title, description, row summary, and all field copy follow the Harness UI language and update immediately when the language changes.
 
 | Environment variable | Purpose |
 |---|---|
 | `DSH_HOME` | Overrides the DSH data directory |
-| `DEEPSEEK_API_KEY` | One credential source for DeepSeek balance queries |
-| `MOONSHOT_API_KEY` | One credential source for Moonshot balance queries |
-| `STEPFUN_API_KEY` | One credential source for StepFun balance queries |
+| `DEEPSEEK_API_KEY` | One credential source for DeepSeek wallet balance queries |
+| `MOONSHOT_API_KEY` | One credential source for Moonshot wallet balance queries |
+| `STEPFUN_API_KEY` | One credential source for StepFun wallet balance queries |
+| `CODEX_HOME` | Codex local session-log directory (used for plan quota); defaults to `~/.codex` |
+| `ZAI_API_KEY` | One credential source for z.ai (GLM Coding international) quota queries |
+| `ZAI_CODING_CN_API_KEY` | One credential source for GLM Coding CN (Zhipu) quota queries |
+| `OPENCODE_API_KEY` | One credential source for OpenCode Go quota queries |
+
+Credentials are read from DSH's credential service first and then from the environment variable of the same name; wallets and plan quotas also prefer the provider's configured `apiKeyEnv` reference.
 
 ## Troubleshooting
 
 <details>
 <summary><strong>The pet does not appear after installation</strong></summary>
 
-Restart `dsh web`, then open **Settings → Plugins → Whale Pet** and ensure the pet is enabled. You can also run `dsh --profile web --dump-config` and confirm the plugin appears in the merged configuration.
+Restart `dsh web`, then open **Plugins → Whale Pet** and ensure the pet is enabled. You can also run `dsh --profile web --dump-config` and confirm the plugin appears in the merged configuration.
 
 </details>
 

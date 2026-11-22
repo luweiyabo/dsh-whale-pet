@@ -3974,7 +3974,7 @@ window.__ModuleLoader__.load({
             };
 
             // ============================================================================
-            // 右键菜单—— 回家 / 刷新余额 / 打开设置 / 隐藏（近 2 分钟有完成提示时多一项「回到完成的会话」）
+            // 右键菜单—— 回家 / 刷新余额 / 打开设置 / 隐藏（近 2 分钟在本页出过完成/待确认气泡时多一项「回到完成的会话」）
             // ============================================================================
             var closeMenu = () => {
                 setMenu(null);
@@ -3983,7 +3983,7 @@ window.__ModuleLoader__.load({
                 if (dragRef.current.active || dragRef.current.dragging) return; // 拖拽中不弹
                 e.preventDefault(); // 屏蔽浏览器默认菜单
                 e.stopPropagation();
-                // 钳制在视口内（菜单约 200×200：回家/刷新余额/设置/隐藏）
+                // 钳制在视口内（菜单约 210×210：回家/刷新余额/设置/隐藏，近 2 分钟有提示时多一项）
                 var x = Math.min(e.clientX, window.innerWidth - 210);
                 var y = Math.min(e.clientY, window.innerHeight - 210);
                 setMenu({ x: Math.max(x, 4), y: Math.max(y, 4) });

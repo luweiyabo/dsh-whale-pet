@@ -4,7 +4,7 @@
 
 # dsh-whale-pet
 
-让鲸鱼娘住进 DeepSeek Harness：感知工作状态、回应互动，并在屏幕上自由漫游。
+让大肥鱼住进 DeepSeek Harness：感知工作状态、回应互动，并在屏幕上自由漫游。
 
 [![npm version](https://img.shields.io/npm/v/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=npm)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
 [![npm downloads](https://img.shields.io/npm/dm/%40luweiyabo%2Fdsh-whale-pet?style=flat-square&logo=npm&label=downloads)](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet)
@@ -18,7 +18,7 @@
 
 </div>
 
-dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI 的开源大肥鱼桌宠插件。它会根据 Agent 的思考、编码、工具调用、等待和错误等状态自动切换动作，也支持点击回应、拖拽、屏幕漫游、自定义动画和触发规则。
+dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的开源大肥鱼桌宠插件。它会根据 Agent 的思考、编码、工具调用、等待和错误等状态自动切换动作，也支持点击回应、拖拽、屏幕漫游、自定义动画、触发规则、余额与套餐额度查询、回合完成提示。
 
 插件包含 **95 个 640×360 透明 WebM 动画**，界面覆盖 Harness 内置的全部 8 种语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português），设置修改后自动保存并热生效。
 
@@ -213,7 +213,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
   <img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/actions/fun/jump_scare.gif" width="160" alt="被吓一跳" title="被吓一跳">
 </p>
 
-### 鲸鱼特色（3）
+### 大肥鱼特色（3）
 
 <p>
   <img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/actions/special/whale_bubbles.gif" width="160" alt="鲸鱼吐泡泡特效" title="鲸鱼吐泡泡特效">
@@ -238,9 +238,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 | Node.js | `^22.19.0 \|\| >=24.0.0`（跟随 DSH 官方要求，见 DSH `package.json` 的 `engines.node`） |
 | pnpm | 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm |
 
-插件 `0.2.0` 在保留 DSH `0.1.x` 兼容的同时，新增对 DSH `0.2.0-rc.2` 及 `0.2.2-rc` 的支持（`0.2.2-rc.5` 已实测；预发布版需要显式声明范围，见下方说明）：`0.1.x` 沿用 `connection.api` / `connection.rpc`，`0.2.0-rc.2` 的设置读写改走 typert Remote 子服务 `remote.settings`，会话活动改由 `uiSession.sessionStatus` 提供，模型流式输出经 `assistant-stream` 帧归一化，设置卡片同时适配官方插件页槽位 `plugins.row.config`。会话事件订阅、模型选择、审批与问答等待状态在两种宿主上行为一致；断线后重建状态时不会把历史消息当作新事件触发规则。余额来源按账户 / 套餐 / API-key 钱包分层：DeepSeek 账户免 API key，套餐不查钱包，API-key 钱包默认查询（可在配置文件关闭）；失败时保留上次余额并标注时间。
-
-**平台差异**：`webm` 的透明通道依赖 VP9-alpha，Chromium 内核与 Firefox 正常；Safari 与 iOS 上的所有浏览器（均为 WebKit）会把透明视频渲染成黑底，插件会自动切换成静态帧，动作仍照常切换，只是没有逐帧动画。
+插件按 DSH 的 Web 客户端加载，Web 与桌面端共用同一套界面；下面的命令以 `web` profile 为例。
 
 ### 从 npm 安装
 
@@ -263,6 +261,18 @@ dsh web
 > ```
 
 同一 Web profile 只能保留一种安装来源。切换 npm、GitHub 或本地源码版本前，请先卸载当前版本；否则多个包会同时声明 `whale-pet` loader entry，导致 DSH 启动失败。
+
+### 从 desktop 安装
+
+DSH Desktop 使用独立的 `desktop` profile，和 Web profile 互不影响，可以直接把插件装进桌面端（同一个 profile 内同样只能保留一种安装来源）：
+
+1. 打开 DSH Desktop，进入左侧 **插件** 页（插件管理器）。
+2. 点 **添加插件**，在「包名或地址」里填入 `@luweiyabo/dsh-whale-pet`（也可以填 GitHub 仓库地址或本地目录路径）。
+3. 等待安装完成后按提示启用；如果提示需要重启，完全退出 DSH Desktop 再重新打开，宠物会出现在窗口右下角。
+
+桌面端「插件」页里也可以对已安装的插件执行更新、停用和卸载；更新后同样按提示重启。
+
+> 如果本机安装了 `dsh` 命令行，也可以先完全退出 Desktop，再执行 `dsh plugin --profile desktop add @luweiyabo/dsh-whale-pet`（desktop profile 需要先打开过一次桌面端才会初始化）。
 
 ### 从本地源码安装
 
@@ -288,7 +298,7 @@ dsh plugin --profile web remove @luweiyabo/dsh-whale-pet
 
 ## 开发
 
-客户端源码位于 `src/client/`：`animations.js` 管理动画目录，`activity.js` 管理事件、规则与仲裁，`notify.js` 判定通知通道（气泡/系统通知/提示音），`balance-alert.js` 负责金额与余额/额度提醒状态，`schedule.js` 负责日历与用量格式化，`host-api.js` 适配不同宿主的 API，`index.js` 保留界面与播放器。修改源码后运行 `npm run build`，同时提交生成的 `lib/client.js`；`npm run check` 会校验产物与源码一致。React 仍由 DSH 宿主提供。
+客户端源码位于 `src/client/`：`animations.js` 管理动画目录，`activity.js` 管理事件、规则与仲裁，`notify.js` 判定通知通道（气泡/系统通知/提示音），`balance-alert.js` 负责金额与余额/额度提醒状态，`schedule.js` 负责日历与用量格式化，`host-api.js` 适配不同宿主的 API，`index.js` 保留界面与播放器。宿主侧在 `lib/index.js`（设置 schema、资源路由、余额与套餐额度查询）和 `lib/balance-*.js`（来源分类、钱包与额度解析）中。修改源码后运行 `npm run build`，同时提交生成的 `lib/client.js`；`npm run check` 会校验产物与源码一致。React 仍由 DSH 宿主提供。
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
@@ -310,7 +320,10 @@ npm pack --dry-run
 
 项目采用 DSH 双半侧插件结构：
 
-- [`lib/index.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/index.js)：宿主侧设置、静态动画、自定义动作和余额 API
+- [`lib/index.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/index.js)：宿主侧设置、静态动画、自定义动作、模型与余额/套餐额度 API
+- [`lib/balance-source.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-source.js)：余额来源分类与错误诊断（宿主侧纯函数）
+- [`lib/balance-quota.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-quota.js)：Codex / OpenCode Go / GLM Coding 套餐额度查询
+- [`lib/balance-providers.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-providers.js)、[`lib/deepseek-balance.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/deepseek-balance.js)：钱包余额端点与响应解析
 - [`lib/client.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/client.js)：浏览器侧播放、交互、意图仲裁和设置界面
 - [`cordis.patch.yml`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/cordis.patch.yml)：DSH bundle 挂载声明
 - [`assets/plugin-logo.png`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/assets/plugin-logo.png)：插件 Logo
@@ -335,25 +348,25 @@ npm pack --dry-run
 | 双击宠物 | 播放“蓝鲸现世”特殊动画并取消选中状态 |
 | 拖拽与反弹 | 移动并放置宠物；拖动时按速度产生挤压拉伸形变，快速甩动后会从球形帧开始播放“变成球”动画并惯性滑行；人物边界触碰屏幕时反弹，开启交互动效时碰撞会产生 Q 弹挤压；系统启用“减少动态效果”时不滑行 |
 | 完全拖出屏幕 | 宠物进入边缘隐藏状态；将指针移到对应屏幕边缘可露出召回区域 |
-| 右键宠物 | 打开快捷菜单：回家、刷新余额、打开设置或隐藏；最近约 2 分钟内收到完成/待确认提示时，多出「回到完成的会话」 |
+| 右键宠物 | 打开快捷菜单：回家、刷新余额、打开设置或隐藏；最近约 2 分钟内在本页看过完成/待确认气泡时，多出「回到完成的会话」 |
 
 ### 打开设置
 
-进入 **设置 → 插件 → 大肥鱼桌宠**（或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
+进入 **插件 → 大肥鱼桌宠**（或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
 
-- 显示、文字气泡、余额显示与余额提醒（余额提醒只有一个开关；阈值、刷新间隔、API-key 授权、回合结束刷新和周/月额度阈值只能在配置文件手改）
+- 显示、文字气泡、余额显示、余额提醒和回合完成提示（余额提醒与回合提示各一个开关；余额阈值、刷新间隔、API-key 授权、回合结束刷新和周/月额度阈值只能在配置文件手改）
 - 交互动效（光标倾斜跟随、点击弹跳、拖拽挤压）
 - 宠物尺寸、默认角落和会话感知范围
 - 安静、均衡、活泼三档自主活跃程度
-- 日历感知（常开）：节日/季节动画优先只在应景时间出现；若配置的池里没有任何应景动画，退回完整池（避免无动作可播）
+- 日历感知（始终开启，配置页无开关）：节日/季节动画优先只在应景时间出现；若配置的池里没有任何应景动画，退回完整池（避免无动作可播）
 - 工作、编码、阅读、搜索、思考、等待、倾听和错误等意图对应的动作
 - 自主动作、移动动作和点击回应动作池
 - 自定义动作上传、预览和删除
 - 自定义事件触发规则
 
-设置页的标题、描述、行摘要和全部开关文案跟随 Harness 的界面语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português），切换语言后即时更新。
+设置页的标题、描述、行摘要和全部开关文案跟随 Harness 的界面语言，切换语言后即时更新。
 
-所有设置会自动保存并即时生效，无需重启。
+设置页里的修改会自动保存并即时生效，无需重启；配置文件里的余额参数修改后需重启 DSH 生效。
 
 ## 功能说明
 
@@ -384,7 +397,7 @@ npm pack --dry-run
 - 支持系统 `prefers-reduced-motion` 设置
 - 日历感知（常开）：节日动画只在节日窗口前后出现（公历 + 农历，闰月按真实历法换算，结果与系统时区无关），四季动画只在对应季节出现；池里没有应景动画时退回完整池
 - 冷启动先用静态透明首帧占位，视频就绪后再淡入，不再出现空白期
-- 后台标签页自动暂停视频播放；余额/额度轮询降为 5 分钟下限（余额提醒开启时），同一浏览器只保留一只宠物（多标签自动让位；`localStorage` 不可用时不做单实例协调，每个标签各显示一只）
+- 后台标签页自动暂停视频播放；余额提醒开启时余额/额度轮询降为 5 分钟下限，未开启时后台暂停轮询；同一浏览器只保留一只宠物（多标签自动让位；`localStorage` 不可用时不做单实例协调，每个标签各显示一只）
 - 拖拽落点会记住：刷新、重启、隐藏后再显示都回到原处（右键「回家」清除）
 
 ### 自定义触发规则
@@ -396,15 +409,15 @@ npm pack --dry-run
 - 可配置优先级、冷却时间和动作保持时间
 - 支持“试触发”和最近触发状态
 - 与内置意图使用同一优先级仲裁机制
-- 新增本地时间（`time`，`HH:MM`）与星期（`dayOfWeek`，`0` = 周日）条件，配合「大于/小于」可写作息与周末规则
+- 支持本地时间（`time`，`HH:MM`）与星期（`dayOfWeek`，`0` = 周日）条件，配合「大于/小于」可写作息与周末规则
 
 ### 账户余额与低余额提醒
 
-开启 `meter` 显示余额；开启 `balance.alert` 在钱包余额或套餐额度不足时提醒。余额来源按以下顺序选择，API-key 钱包默认查询：
+在设置里开启「显示余额」显示余额、开启「余额提醒」在钱包余额或套餐额度不足时提醒。余额来源按以下顺序选择，API-key 钱包默认查询：
 
 - **DeepSeek 账户**（已登录）：走 DSH 账户服务 `remote.account.getBalance`，不需要 API key；金额为充值 + 赠送合计。
-- **套餐 / 订阅**（Kimi Coding、GLM Coding、Qwen / Xiaomi Token Plan、ChatGPT Codex、GitHub Copilot 等）：余额区显示“套餐/订阅计费，不适用余额查询”，不查钱包、不碰 key。
-- **套餐额度**：Codex 读本地日志（5h/周，不联网、不读 token）；OpenCode Go 查官方接口（5h/周/月）；GLM Coding 国内站 / z.ai 国际站查官方接口（5h/周）。有额度接口时，气泡显示“5h 62% · 周 31%”，详情卡显示进度条与重置倒计时；没有接口、或接口没返回某个窗口时不伪造数字。只使用服务商官方 baseURL，自定义 baseURL 视为不支持、不发送 key。额度查询默认使用 API key；周/月额度剩余 ≤5% 时提醒一次，5h 窗口不参与提醒。
+- **套餐 / 订阅**（Kimi Coding、GLM Coding、Qwen / Xiaomi Token Plan、ChatGPT Codex、GitHub Copilot 等）：余额区显示“套餐/订阅计费，不适用余额查询”，不查钱包；套餐额度查询见下一条。
+- **套餐额度**：Codex 读本地日志（5h/周，只读日志、不联网）；OpenCode Go 查官方接口（5h/周/月）；GLM Coding 国内站 / z.ai 国际站查官方接口（5h/周）。有额度接口时，气泡显示“5h 62% · 周 31%”，详情卡显示进度条与重置倒计时；没有接口、或接口没返回某个窗口时不伪造数字。只使用服务商官方 baseURL，自定义 baseURL 视为不支持、不发送 key。需要联网的额度查询默认使用 API key（Codex 不需要）；周/月额度剩余 ≤5% 时提醒一次，5h 窗口不参与提醒。
 - **API-key 钱包**（DeepSeek / Moonshot / StepFun）：默认查询；key 只在宿主使用，只发往对应服务商的官方余额端点；未知路由不猜，自定义 baseURL 视为不支持、不发送 key。
 
 低余额提醒：
@@ -416,7 +429,7 @@ npm pack --dry-run
 - 打开会话即自动识别当前模型并拉取余额，不再需要先发一次模型请求；识别期间显示“正在识别当前会话模型”。
 - 悬停余额气泡展开详情、移出收起：来源、币种与上次更新时间；金额变化带滚动动画（减少动态效果时关闭）。刷新余额和打开设置保留在右键菜单中。
 - 代理：DSH 启动时读取 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`，插件使用普通 `fetch`，不另建代理。系统代理设置不生效；不支持 SOCKS；TLS 拦截代理需在启动前设置 `NODE_EXTRA_CA_CERTS`。
-- 不进行 Token 费用估算。余额提醒默认开启；设置页只保留这一个开关，其余余额参数不显示，但可手动修改 profile 的 `cordis.patch.yml` 中 `whale-pet.config.balance`：`thresholds.CNY/USD`（默认 5 / 1）、`refreshMs`（默认 60000）、`allowApiKey`（默认 true）、`turnRefresh`（默认 true）、`timeoutMs`（默认 12000）、`quotaAlert.weeklyPct/monthlyPct`（默认 5），修改后重启生效。
+- 余额提醒默认开启；余额相关设置里只保留「余额提醒」这一个开关，其余参数不显示，但可手动修改 profile 的 `cordis.patch.yml` 中 `whale-pet.config.balance`：`thresholds.CNY/USD`（默认 5 / 1）、`refreshMs`（默认 60000）、`allowApiKey`（默认 true）、`turnRefresh`（默认 true）、`timeoutMs`（默认 12000）、`quotaAlert.weeklyPct/monthlyPct`（默认 5），修改后重启生效。
 
 ### 回合完成提示
 
@@ -431,7 +444,7 @@ npm pack --dry-run
 
 ## 动作配置
 
-完整内置动作见[动作展示](#动作展示)。动作选择器会跟随 Harness 语言显示对应语言的名称，并支持按分类、英文 ID 或中英文名称搜索；内置动作与用户上传动作都可以加入自主动作池、绑定事件意图或用于触发规则。
+完整内置动作见[动作展示](#动作展示)。动作选择器会跟随 Harness 语言显示对应语言的名称，并支持按分类、英文 ID 或名称搜索（当前界面语言、中文、英文均可）；内置动作与用户上传动作都可以加入自主动作池、绑定事件意图或用于触发规则。
 
 ## 自定义动作
 
@@ -466,16 +479,22 @@ $DSH_HOME/whale-pet/actions/
 | 环境变量 | 用途 |
 |---|---|
 | `DSH_HOME` | 指定 DSH 数据目录；未设置时使用 DSH 默认目录 |
-| `DEEPSEEK_API_KEY` | DeepSeek 余额查询凭据来源之一 |
-| `MOONSHOT_API_KEY` | Moonshot 余额查询凭据来源之一 |
-| `STEPFUN_API_KEY` | StepFun 余额查询凭据来源之一 |
+| `DEEPSEEK_API_KEY` | DeepSeek 钱包余额查询凭据来源之一 |
+| `MOONSHOT_API_KEY` | Moonshot 钱包余额查询凭据来源之一 |
+| `STEPFUN_API_KEY` | StepFun 钱包余额查询凭据来源之一 |
+| `CODEX_HOME` | Codex 本地会话日志目录（用于套餐额度）；默认 `~/.codex` |
+| `ZAI_API_KEY` | z.ai（GLM Coding 国际站）套餐额度查询凭据来源之一 |
+| `ZAI_CODING_CN_API_KEY` | GLM Coding 国内站（智谱）套餐额度查询凭据来源之一 |
+| `OPENCODE_API_KEY` | OpenCode Go 套餐额度查询凭据来源之一 |
+
+凭据优先从 DSH 的凭据服务读取，其次读取同名环境变量；钱包与套餐额度也会优先使用对应服务商配置里的 `apiKeyEnv` 引用名。
 
 ## 常见问题
 
 <details>
 <summary><strong>安装后没有看到宠物</strong></summary>
 
-重新启动 `dsh web`，然后进入 **设置 → 插件 → 大肥鱼桌宠**，确认“显示宠物”已开启。也可以运行 `dsh --profile web --dump-config`，检查插件是否出现在组合配置中。
+重新启动 `dsh web`，然后进入 **插件 → 大肥鱼桌宠**，确认“显示宠物”已开启。也可以运行 `dsh --profile web --dump-config`，检查插件是否出现在组合配置中。
 
 </details>
 
@@ -513,15 +532,6 @@ MP4（H.264）没有透明通道，宠物会显示成黑色方块；请改用带
 <summary><strong>同时开了多个 DSH 标签页，为什么只有一只有宠物</strong></summary>
 
 插件用 `localStorage` 心跳做单实例：只有持有心跳的标签渲染宠物，其它标签待命（设置卡仍可用）。关闭或刷新主标签后，另一个标签会在几秒内自动接替。浏览器禁用 `localStorage`（如部分隐私模式）时无法协调：每个标签都会显示宠物，也不会有主从接替。
-
-</details>
-
-<details>
-<summary><strong>Safari 里宠物是静止的</strong></summary>
-
-Safari（以及 iOS 上的所有浏览器）底层是 WebKit，不认 VP9 的 alpha 通道，视频会被渲染成黑底方块。
-插件检测到这类环境后改用从每段动画抽首帧的静态图，黑底消失，但只有静态姿势。
-需要逐帧动画请改用 Chromium 内核浏览器或桌面端。
 
 </details>
 
