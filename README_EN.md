@@ -61,7 +61,7 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.3`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances are layered by account / plan / API-key wallet: DeepSeek account needs no API key, plans do not query a wallet, and API-key wallets are queried by default; failures keep the last known balance labelled with its time.
+Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.5`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances are layered by account / plan / API-key wallet: DeepSeek account needs no API key, plans do not query a wallet, and API-key wallets are queried by default (can be turned off in the config file); failures keep the last known balance labelled with its time.
 
 **Platform note**: transparent WebM relies on VP9 alpha, which works in Chromium-based browsers and Firefox. Safari and every browser on iOS (all WebKit) render transparent video on a black box, so the pet switches to static frames automatically: actions still change, but there is no frame-by-frame motion.
 
@@ -104,7 +104,7 @@ Restart `dsh web` after uninstalling. User-uploaded actions remain in `$DSH_HOME
 
 ## Development
 
-Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, and `index.js` owns the UI and player. Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH.
+Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, `notify.js` decides notification channels (bubble / system notification / chime), `balance-alert.js` owns money and balance/quota alert state, `schedule.js` owns calendar and usage formatting, `host-api.js` adapts to different hosts, and `index.js` owns the UI and player. Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH.
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
@@ -151,17 +151,17 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 | Double-click the pet | Plays the “Blue Whale Appears” special animation and clears selection |
 | Drag and bounce | Moves and places the pet; squash-and-stretch follows drag speed, and a quick throw starts the “Turn Into a Ball” animation at its ball-shaped frame and continues with momentum; the character bounds bounce off screen edges, collisions add a Q-style squash when interactive effects are enabled; momentum is disabled when Reduce Motion is enabled |
 | Drag fully off-screen | Enters edge-hidden mode; move the pointer to that screen edge to reveal the recall handle |
-| Right-click | Opens shortcuts for Home, Refresh balance, Settings, and Hide |
+| Right-click | Opens shortcuts for Home, Refresh balance, Settings, and Hide; a “Back to finished session” entry appears for about 2 minutes after the latest done/needs-input notification |
 
 ### Settings
 
 Open **Settings → Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
 
-- Visibility, text bubbles, balance, low-balance and plan-quota alerts (the balance alert switch lives in Display & Behavior; thresholds can be edited in the config file)
+- Visibility, text bubbles, balance display, and balance alerts (the balance alert row exposes only one switch; thresholds, refresh interval, API-key permission, turn-end refresh, and weekly/monthly quota thresholds are config-file only)
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
 - Pet size, default corner, and session-awareness scope
 - Quiet, balanced, or lively autonomous activity
-- Calendar awareness (always on): festival and seasonal animations only appear in their window
+- Calendar awareness (always on): festival and seasonal animations are preferred only in their window; if the configured pool has no in-season animation, the full pool is used instead of an empty one
 - Animations for working, coding, reading, researching, thinking, waiting, listening, and error states
 - Autonomous, movement, and click-reaction pools
 - Custom action upload, preview, and deletion
@@ -196,9 +196,9 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Double-buffered video crossfades
 - Interactive effects layer: cursor tilt-follow (rAF spring), click bounce, drag squash-and-stretch, and bouncy squash during coasting/bounces, globally toggleable
 - Support for `prefers-reduced-motion`
-- Calendar awareness (always on): festival animations appear only around their dates (Gregorian and Chinese lunar, resolved via the system Chinese calendar); seasonal animations only in their season
+- Calendar awareness (always on): festival animations appear only around their dates (Gregorian and Chinese lunar; leap months are handled correctly and the result is timezone-independent); seasonal animations only in their season. If the pool has no suitable animation, the full pool is used instead of an empty one
 - A static transparent first-frame poster covers cold starts until the first video is ready
-- Background tabs pause playback and balance polling; only one pet per browser (other tabs step aside)
+- Background tabs pause video playback and throttle balance/quota polling to a 5-minute floor (when balance alerts are on); only one pet per browser (other tabs step aside; when `localStorage` is unavailable, every tab shows a pet and no single-instance coordination happens)
 - The dragged position is remembered across reloads, restarts, and hide/show cycles (right-click Home clears it)
 
 ### Custom trigger rules
@@ -216,27 +216,27 @@ Enable `meter` to show the balance and `balance.alert` to be notified when the w
 
 - **DeepSeek account** (signed in): uses the DSH account service `remote.account.getBalance`; no API key. The amount is recharge + bonus.
 - **Plans / subscriptions** (Kimi Coding, GLM Coding, Qwen / Xiaomi Token Plan, ChatGPT Codex, GitHub Copilot, etc.): reports "plan/subscription billing — no wallet balance" and never queries a wallet or a key.
-- **Plan quota**: Codex reads local logs (5h/week; offline, no token); OpenCode Go queries its official endpoint (5h/week/month); GLM Coding CN and z.ai intl query their official endpoints (5h/week). When available, the bubble shows "5h 62% · week 31%" and the detail card shows bars plus reset countdowns. No fake numbers when an endpoint is unavailable. Quota reads use the API key by default; a weekly/monthly window alerts once when 5% or less remains.
-- **API-key wallets** (DeepSeek / Moonshot / StepFun): queried by default. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed.
+- **Plan quota**: Codex reads local logs (5h/week; offline, no token); OpenCode Go queries its official endpoint (5h/week/month); GLM Coding CN and z.ai intl query their official endpoints (5h/week). When available, the bubble shows "5h 62% · week 31%" and the detail card shows bars plus reset countdowns. No fake numbers when an endpoint is unavailable. Only official provider baseURLs are used for quota; a custom baseURL is treated as unsupported and no key is sent. Quota reads use the API key by default; a weekly/monthly window alerts once when 5% or less remains, and the 5h window never alerts. Missing windows are not fabricated.
+- **API-key wallets** (DeepSeek / Moonshot / StepFun): queried by default. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed, and a custom baseURL is treated as unsupported with no key sent.
 
 Low-balance alerts:
 
 - Default thresholds CNY 5 / USD 1; one alert per crossing, reset after topping up.
 - Weekly/monthly plan quota alerts by default when 5% or less remains; resets after recovery. The 5h window is not alerted.
-- Channel: **system notification first** — crossing the threshold sends a system notification even while the page is focused (a bubble alone is easy to miss), and the in-page bubble is kept too; when system notifications are unavailable, an unfocused page gets the chime plus a title dot and a focused page gets the bubble.
-- Default 60 s refresh interval; right-click "Refresh balance" queries immediately (3 s Host debounce); the current session refreshes once when a turn ends.
+- Channel: **system notification first** — crossing the threshold sends a system notification even while the page is focused (a bubble alone is easy to miss), and the in-page bubble is kept too; when system notifications are unavailable, an unfocused page gets the chime plus a title dot and a focused page gets the bubble. If a focused system notification fails to send, the page falls back to the bubble.
+- Default 60 s refresh interval; right-click "Refresh balance" queries the balance and plan quota immediately (3 s Host floor); the current session refreshes once when a turn ends.
 - Opening a session detects its model automatically and fetches the balance without waiting for a model request; the bubble shows "Detecting the session model…" while resolving.
 - Hover the balance bubble to expand the detail and move away to collapse it: source, currencies, and last update; changed amounts roll with reduced-motion support. Refresh and settings remain in the right-click menu.
 - Proxy: DSH reads `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at launch; the plugin uses plain `fetch` and never installs its own proxy. OS proxy settings are not read; SOCKS is unsupported; a TLS-intercepting proxy needs `NODE_EXTRA_CA_CERTS` before launch.
-- Token costs are not estimated. Low-balance alerts are on by default; Settings exposes only that switch, while the other balance parameters are editable in the profile `cordis.patch.yml` under `whale-pet.config.balance`: `thresholds.CNY/USD`, `refreshMs`, `allowApiKey`, `turnRefresh`, `quotaAlert.weeklyPct/monthlyPct` (restart to apply).
+- Token costs are not estimated. Low-balance alerts are on by default; Settings exposes only that switch, while the other balance parameters are editable in the profile `cordis.patch.yml` under `whale-pet.config.balance`: `thresholds.CNY/USD` (default 5 / 1), `refreshMs` (default 60000), `allowApiKey` (default true), `turnRefresh` (default true), `timeoutMs` (default 12000), `quotaAlert.weeklyPct/monthlyPct` (default 5) (restart to apply).
 
 ### Turn notifications
 
-Get notified when a turn finishes, fails, or waits for your approval/answer. When the page is hidden it uses system notifications; insecure contexts (LAN over HTTP) fall back to a chime plus a dot in the tab title.
+Get notified when a turn finishes, fails, or waits for your approval/answer. There are exactly three channels: an in-page bubble, a system notification while the page is not visible/focused, and a chime plus a title dot when system notifications are unavailable.
 
-- Page focused: a bubble above the pet with a reaction animation; other sessions include their name, and clicking the bubble switches back
+- Page focused: a bubble above the pet with a reaction animation; in-page notifications are bubbles only (the old notification card and queue have been removed); other sessions include their name, and clicking the bubble switches back
 - Page unfocused/minimized: system notification on Windows, macOS, and Linux (grant browser permission once on the Web; none needed in Desktop)
-- No system notification available: a short chime plus a `●` title marker, and the card is shown when you return
+- No system notification available: a short chime plus a `●` title marker (also when permission was denied, the context is insecure, or `Notification` is missing); no card is back-filled when you return
 - One “Turn notifications” checkbox under Display & behavior: it covers completion, failure, and needs-input; system notifications versus the chime is decided by the environment
 - Subagent sessions never notify: a subagent is a separate child session, so its completion/failure only drives pet animations — no bubble, system notification, or chime
 - Background sessions are watched regardless of the activity scope, so switching away does not lose the completion
@@ -301,7 +301,7 @@ Move the pointer to the screen edge where it disappeared. You can also enable it
 <details>
 <summary><strong>The balance bubble says unsupported or failed</strong></summary>
 
-A plan/subscription provider showing “plan/subscription billing” is expected; an API-key wallet showing “needs permission” can be enabled under Settings → Account balance. For network/proxy errors, check `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at DSH launch; a TLS-intercepting proxy also needs `NODE_EXTRA_CA_CERTS`.
+A plan/subscription provider showing “plan/subscription billing” is expected; an API-key wallet showing “needs permission” means querying was disabled in the config file — set `whale-pet.config.balance.allowApiKey: true` in the profile `cordis.patch.yml` and restart (it is on by default). For network/proxy errors, check `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at DSH launch; a TLS-intercepting proxy also needs `NODE_EXTRA_CA_CERTS`.
 
 </details>
 
@@ -325,7 +325,7 @@ when that fails does it show a hint. Older 0.1.x shells keep the legacy Settings
 <details>
 <summary><strong>Why is there only one pet when I open several DSH tabs?</strong></summary>
 
-The plugin keeps a single instance with a `localStorage` heartbeat: only the tab holding it renders the pet, other tabs stand by (their settings card still works). After the leading tab closes or reloads, another tab takes over within seconds.
+The plugin keeps a single instance with a `localStorage` heartbeat: only the tab holding it renders the pet, other tabs stand by (their settings card still works). After the leading tab closes or reloads, another tab takes over within seconds. When `localStorage` is unavailable (for example some privacy modes) no coordination happens: every tab shows the pet and there is no takeover.
 
 </details>
 

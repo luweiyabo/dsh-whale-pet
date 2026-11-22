@@ -60,9 +60,13 @@ test('resolveHostApi：0.2.0 设置未就绪时 describe 返回 ok:false 而非�
     const api = resolveHostApi(undefined, {
         getSettings: () => undefined,
         sessions: { list: observable({ ids: [], byId: {} }) },
+        // 测试里缩短等待窗口：默认 15s 的真实兜底不应拖慢整个测试套件
+        settingsTimeoutMs: 60,
     });
+    const started = Date.now();
     const described = await api.settings.describe();
     assert.equal(described.result.ok, false);
+    assert.ok(Date.now() - started < 5000, '未就绪时应在配置的短超时内返回');
 });
 
 // ---------------------------------------------------------------------------

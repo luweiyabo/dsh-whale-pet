@@ -278,7 +278,8 @@
         "quotaAlertTitle": "Cota do plano baixa",
         "quotaAlertLine": "Cota {window} restante: {remaining}%",
         "quotaWindowWeek": "semanal",
-        "quotaWindowMonth": "mensal"
+        "quotaWindowMonth": "mensal",
+        "notifyStepOne": "{n} passo"
     },
     "animNames": {
         "breathing": "Respiração ociosa",

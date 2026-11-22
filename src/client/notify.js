@@ -11,9 +11,9 @@
  * 【三条通道】
  *   system —— `new Notification()`：页面失焦/隐藏时进系统通知中心（跨软件可见）。
  *             要求安全上下文 + 已授权；Desktop 由 DSH 主进程放行。
- *   sound  —— WebAudio 合成短音：非安全上下文（局域网 http）下唯一实时的提示。
- *   card   —— 页内右侧卡片：页面聚焦时用；系统通知不可用时回前台补显。
- *   标题 `●` 是降级兜底，任何通道不可用都可以叠上。
+ *   sound  —— WebAudio 合成短音：系统通知不可用时唯一实时的提示。
+ *   bubble —— 页内桌宠上方气泡：页面聚焦时使用；带会话名，点一下切回该会话。
+ *   标题 `●` 是 sound 通道的兜底。页内「通知卡片 / 队列」通道已移除（不可达且与气泡重复）。
  *
  * 【边界】
  *   1. 页面/应用关闭后收不到任何事件 —— 事件来自页面内的流；要覆盖需要 Push
@@ -29,21 +29,21 @@ export const NOTIFY_KINDS = ['done', 'error', 'waiting'];
 /**
  * 默认配置（与宿主 schema 的默认值保持一致）：只有**一个总开关**。
  * 系统通知与提示音由运行环境决定（安全上下文 / 授权 / 构造函数），不再单独配置；
- * 旧版本配置里的 done/error/waiting/system/sound 单键仍被 notifyDecision 兼容读取。
+ * 0.2.0 开发版里的五个细分开关（done/error/waiting/system/sound）不再读取：
+ * 它们从未正式发布，保留兼容反而会让旧值成为界面上无法清除的隐藏静音。
  */
 export const DEFAULT_NOTIFY = {
     enabled: true,
 };
 
-/** 卡片自动消失时长（ms）；waiting 由 resolved 撤销，超时只是清理兜底 */
-const CARD_TTL = { done: 8000, error: 10000, waiting: 15000, balance: 10000 };
-/** 同屏卡片上限 / 队列总上限 */
-const CARD_MAX_SHOWN = 3;
-const CARD_CAP = 6;
+/** 系统通知 tag 长度上限：Windows toast 的 Tag 只有 16 字符，超长会被静默丢弃 */
+const TAG_MAX = 16;
 /** 系统通知限流：同 tag 3s、全局 10s 内 3 条 */
 const TAG_MIN_INTERVAL_MS = 3000;
 const GLOBAL_WINDOW_MS = 10000;
 const GLOBAL_MAX = 3;
+/** 正文里错误摘要的最大长度（provider 可能回整段 HTTP 文本） */
+const ERROR_TEXT_MAX = 120;
 
 /**
  * `turn/end` 的 reason → 提示分类。
@@ -94,52 +94,49 @@ export function notificationEnvironment(scope) {
 /**
  * 通道判定（纯函数，全部输入显式传入）。
  *
- * 输入：kind / notify 配置 / visible / focused / sessionId / currentSessionId /
- *       secure / supported / permission
- * 配置里只有总开关 enabled；system/sound 若显式写 false 仍生效（高级用法），
- * 缺省视为开启。
- * 输出：{ channel, title, card }
- *   channel: 'none' | 'bubble' | 'card' | 'system' | 'sound'
- *   title:   是否叠加标题 `●`
- *   card:    是否入队页内卡片（回前台补显）
+ * 输入：kind / notify 配置 / visible / focused / secure / supported / permission /
+ *       preferSystem。
+ * 输出：{ channel, title }
+ *   channel: 'none' | 'bubble' | 'system' | 'sound'
+ *   title:   是否叠加标题 `●`（仅 sound 通道使用）
+ *
+ * 判定顺序：低余额等「立刻要知道」的事件优先系统通知；页面可见且聚焦时一律走
+ * 页内气泡（当前会话与其它会话都是气泡，后者带会话名并可点回）；页面不可见时
+ * 系统通知可用就发系统通知；否则退化为提示音 + 标题圆点。
  *
  * @param {object} input
  */
 export function channelDecision(input) {
     var i = input || {};
-    var cfg = i.notify || DEFAULT_NOTIFY;
     var visible = i.visible !== false;
     var focused = i.focused !== false;
-    var systemReady =
-        cfg.system !== false && i.secure === true && i.supported === true && i.permission === 'granted';
-    // preferSystem：重要且罕见的事件（低余额）不等用户切走，系统通知可用就直接发 ——
-    // 只出气泡不够明显，用户可能正盯着别处。
-    if (i.preferSystem === true && systemReady) return { channel: 'system', title: false, card: false };
-    if (visible && focused) {
-        // sessionScoped=false：全局提醒（余额）在聚焦时只出气泡，不卡片化。
-        if (i.sessionScoped === false) return { channel: 'bubble', title: false, card: false };
-        // 正看着 DSH：同一会话只出气泡，别的会话出卡片（不打扰系统通知）
-        if (i.sessionId && i.currentSessionId && i.sessionId === i.currentSessionId)
-            return { channel: 'bubble', title: false, card: false };
-        return { channel: 'card', title: false, card: true };
-    }
-
-    if (systemReady) return { channel: 'system', title: false, card: false };
-
-    // 系统通知不可用：声音是唯一「人不在页面也能感知」的通道；关掉声音则回前台补卡
-    if (cfg.sound !== false) return { channel: 'sound', title: true, card: false };
-    return { channel: 'none', title: true, card: true };
+    var systemReady = i.secure === true && i.supported === true && i.permission === 'granted';
+    // preferSystem：重要且罕见的事件（低余额）不等用户切走，系统通知可用就直接发。
+    if (i.preferSystem === true && systemReady) return { channel: 'system', title: false };
+    if (visible && focused) return { channel: 'bubble', title: false };
+    if (systemReady) return { channel: 'system', title: false };
+    // 系统通知不可用：声音是唯一「人不在页面也能感知」的通道
+    return { channel: 'sound', title: true };
 }
 
+/**
+ * 事件级判定：总开关 + 事件类型过滤，再交给通道判定。
+ * 旧开发版的 done/error/waiting/system/sound 细分开关不再兼容读取（见 DEFAULT_NOTIFY 注释）。
+ * @param {object} input - 同 channelDecision，另加 kind / notify
+ */
 export function notifyDecision(input) {
     var i = input || {};
     var cfg = i.notify || DEFAULT_NOTIFY;
     var kind = i.kind;
-    var none = { channel: 'none', title: false, card: false };
-    if (cfg.enabled === false) return none;
-    if (NOTIFY_KINDS.indexOf(kind) === -1) return none;
-    if (cfg[kind] === false) return none; // 旧配置的单事件开关：仍尊重，避免升级后突然变吵
+    if (cfg.enabled === false) return { channel: 'none', title: false };
+    if (NOTIFY_KINDS.indexOf(kind) === -1) return { channel: 'none', title: false };
     return channelDecision(i);
+}
+
+function truncateText(value, limit) {
+    var text = String(value == null ? '' : value);
+    if (text.length <= limit) return text;
+    return text.slice(0, Math.max(0, limit - 1)) + '…';
 }
 
 /**
@@ -160,12 +157,16 @@ export function formatNotifyText(entry, t) {
         e.kind === 'error' ? 'notifyError' : e.kind === 'waiting' ? 'notifyWaiting' : 'notifyDone'
     );
     if (e.kind === 'waiting') return { title: title, body: tr('notifyWaitBody') };
-    if (e.kind === 'error') return { title: title, body: e.message || tr('notifyErrorBody') };
+    if (e.kind === 'error')
+        return { title: title, body: truncateText(e.message, ERROR_TEXT_MAX) || tr('notifyErrorBody') };
 
     var parts = [];
     var s = e.summary || {};
     if (s.durationMs) parts.push(formatDuration(s.durationMs));
-    if (s.steps) parts.push(tr('notifySteps').replace('{n}', s.steps));
+    if (s.steps) {
+        var stepsText = s.steps === 1 ? tr('notifyStepOne') : tr('notifySteps');
+        parts.push(stepsText.replace('{n}', s.steps));
+    }
     if (s.tokens) parts.push(formatTokens(s.tokens) + ' tokens');
     if (e.limit) parts.push(tr('notifyLimit'));
     return { title: title, body: parts.join(' · ') };
@@ -316,105 +317,10 @@ export function createNotifierSound(deps) {
     };
 }
 
-/** 空队列 */
-export function emptyNotifyQueue() {
-    return { cards: [] };
-}
-
-function shownCount(cards) {
-    var n = 0;
-    for (var i = 0; i < cards.length; i++) if (cards[i].status === 'shown') n += 1;
-    return n;
-}
-
-function withStatus(card, status) {
-    return card.status === status ? card : Object.assign({}, card, { status: status });
-}
-
 /**
- * 通知队列 reducer（纯函数）。
- * 卡片结构：{ id, kind, sessionId, title, session, meta, status: 'shown'|'queued' }
- *
- * action:
- *   { type: 'enqueue', card }      入队；同 id 不重复
- *   { type: 'promote' }            页面回到前台，把排队卡片补到上限
- *   { type: 'dismiss', id }        关闭一张
- *   { type: 'resolve', sessionId } 该会话的 waiting 卡（审批已处理）自动撤下
- *   { type: 'clear' }              清空
- */
-export function notifyQueueReducer(state, action, opts) {
-    var current = state && Array.isArray(state.cards) ? state : emptyNotifyQueue();
-    var max = (opts && opts.max) || CARD_MAX_SHOWN;
-    var cap = (opts && opts.cap) || CARD_CAP;
-    var cards = current.cards.slice();
-    var a = action || {};
-
-    if (a.type === 'clear') return emptyNotifyQueue();
-
-    if (a.type === 'dismiss') {
-        return {
-            cards: cards.filter(function (c) {
-                return c.id !== a.id;
-            }),
-        };
-    }
-
-    if (a.type === 'resolve') {
-        return {
-            cards: cards.filter(function (c) {
-                return !(c.kind === 'waiting' && c.sessionId === a.sessionId);
-            }),
-        };
-    }
-
-    if (a.type === 'promote') {
-        var shown = shownCount(cards);
-        if (shown >= max) return current;
-        var changed = false;
-        var promoted = cards.map(function (c) {
-            if (c.status === 'queued' && shown < max) {
-                shown += 1;
-                changed = true;
-                return withStatus(c, 'shown');
-            }
-            return c;
-        });
-        return changed ? { cards: promoted } : current;
-    }
-
-    if (a.type === 'enqueue') {
-        var card = a.card;
-        if (!card || !card.id) return current;
-        for (var i = 0; i < cards.length; i++) if (cards[i].id === card.id) return current;
-        // 调用方可以强制排队（页面隐藏时先不显示，回前台再补）
-        var status =
-            a.status === 'queued' || a.status === 'shown'
-                ? a.status
-                : shownCount(cards) < max
-                  ? 'shown'
-                  : 'queued';
-        if (status === 'shown' && shownCount(cards) >= max) status = 'queued';
-        cards.push(Object.assign({}, card, { status: status }));
-        // 超过总上限：先丢最旧的排队卡，再丢最旧的已显示卡
-        while (cards.length > cap) {
-            var idx = -1;
-            for (var j = 0; j < cards.length; j++)
-                if (cards[j].status === 'queued') {
-                    idx = j;
-                    break;
-                }
-            if (idx === -1) idx = 0;
-            cards.splice(idx, 1);
-        }
-        return { cards: cards };
-    }
-
-    return current;
-}
-
-/**
- * 稳定短哈希：用于 Windows toast 的 tag（Tag 上限 16 字符）。
- * waiting 类通知需要「同一会话替换而不是新增」，所以 tag 必须稳定。
+ * 稳定短哈希：用于 Windows toast 的 tag 与会话去重键。
+ * @param {unknown} value
+ * @returns {string} 8 位 base36
  */
 export function shortHash(value) {
     var s = String(value || '');
@@ -423,9 +329,20 @@ export function shortHash(value) {
     return h.toString(36).slice(-8);
 }
 
-/** 卡片自动消失时长（waiting 有独立兜底） */
-export function cardTtl(kind) {
-    return CARD_TTL[kind] || CARD_TTL.done;
+/**
+ * 系统通知的 toast tag（<=16 字符）。
+ * waiting 用会话稳定 tag（同一会话重复提醒替换而不是叠加）；done/error 用
+ * 会话短哈希 + kind + 事件序，避免不同会话同 seq 时 tag 碰撞导致通知被替换/限流丢弃。
+ * @param {{kind?: string, sessionId?: string, seq?: number}} entry
+ * @returns {string}
+ */
+export function systemTagFor(entry) {
+    var e = entry || {};
+    var session = shortHash(e.sessionId || '');
+    if (e.kind === 'waiting') return ('wpw' + session).slice(0, TAG_MAX);
+    var kind = e.kind === 'error' ? 'e' : 'd';
+    var seq = e.seq === undefined || e.seq === null ? '' : String(e.seq).slice(-4);
+    return ('wp' + kind + session.slice(0, 6) + seq).slice(0, TAG_MAX);
 }
 
 /**

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
     BALANCE_PROVIDER_IDS,
     getBalanceProvider,
-    inferBalanceProviderFromRoute,
     matchBalanceProviderBaseURL,
     parseProviderBalances,
 } from '../lib/balance-providers.js';
@@ -16,14 +15,14 @@ test('只公开固定的官方余额端点', () => {
     assert.equal(getBalanceProvider('zhipu'), undefined);
 });
 
-test('按实际供应商路由和官方基础地址映射，不根据模型名称猜测', () => {
-    assert.equal(inferBalanceProviderFromRoute('llm-deepseek'), 'deepseek');
-    assert.equal(inferBalanceProviderFromRoute('team-kimi'), 'moonshot');
-    assert.equal(inferBalanceProviderFromRoute('stepfun-prod'), 'stepfun');
-    assert.equal(inferBalanceProviderFromRoute('siliconflow'), undefined);
+test('按官方基础地址映射，不根据路由或模型名称猜测', () => {
     assert.equal(matchBalanceProviderBaseURL('https://api.moonshot.cn/v1'), 'moonshot');
     assert.equal(matchBalanceProviderBaseURL('https://api.stepfun.com/v1'), 'stepfun');
     assert.equal(matchBalanceProviderBaseURL('https://proxy.example/v1'), undefined);
+    // 设计上不再做 route/模型名子串推断（kimi、deepseek 等都不能直接映射钱包）。
+    assert.equal(getBalanceProvider('team-kimi'), undefined);
+    assert.equal(getBalanceProvider('kimi-coding'), undefined);
+    assert.equal(getBalanceProvider('deepseek-account'), undefined);
 });
 
 test('解析 Kimi 可用余额且不估算 Token 成本', () => {

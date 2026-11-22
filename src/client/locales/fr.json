@@ -278,7 +278,8 @@
         "quotaAlertTitle": "Quota du forfait faible",
         "quotaAlertLine": "Quota {window} restant : {remaining} %",
         "quotaWindowWeek": "hebdomadaire",
-        "quotaWindowMonth": "mensuel"
+        "quotaWindowMonth": "mensuel",
+        "notifyStepOne": "{n} étape"
     },
     "animNames": {
         "breathing": "Respiration au repos",

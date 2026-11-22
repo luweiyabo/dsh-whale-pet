@@ -85,8 +85,8 @@ test('平台兼容范围覆盖 0.1.x / 0.2.x 正式版与已知预发布版', ()
     for (const v of ['0.1.0-rc.6', '0.1.2-rc.1', '0.2.0-rc.2', '0.2.1', '0.2.3']) {
         assert.equal(satisfies(v, RANGE), true, v + ' 应该被支持');
     }
-    // 本机 desktop 实际运行的版本（app.asar 里读到 0.2.2-rc.3）
-    assert.equal(satisfies('0.2.2-rc.3', RANGE), true, '当前运行版本必须落在声明范围内');
+    // 本机 desktop 实际运行的版本（app.asar 里读到 0.2.2-rc.5；rc.3 是旧的记录）
+    assert.equal(satisfies('0.2.2-rc.5', RANGE), true, '当前运行版本必须落在声明范围内');
     assert.equal(satisfies('0.3.0', RANGE), false, '超出 0.2.x 不应声明支持');
 });
 

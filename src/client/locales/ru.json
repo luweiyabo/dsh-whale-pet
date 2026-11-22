@@ -278,7 +278,8 @@
         "quotaAlertTitle": "Квота тарифа заканчивается",
         "quotaAlertLine": "Остаток квоты «{window}»: {remaining} %",
         "quotaWindowWeek": "неделя",
-        "quotaWindowMonth": "месяц"
+        "quotaWindowMonth": "месяц",
+        "notifyStepOne": "{n} шаг"
     },
     "animNames": {
         "breathing": "Дыхание в покое",

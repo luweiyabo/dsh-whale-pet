@@ -278,7 +278,8 @@
         "quotaAlertTitle": "Tarifkontingent niedrig",
         "quotaAlertLine": "{window}-Kontingent: noch {remaining} %",
         "quotaWindowWeek": "Wochen",
-        "quotaWindowMonth": "Monats"
+        "quotaWindowMonth": "Monats",
+        "notifyStepOne": "{n} Schritt"
     },
     "animNames": {
         "breathing": "Atmen im Leerlauf",

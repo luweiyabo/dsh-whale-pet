@@ -278,7 +278,8 @@
         "quotaAlertTitle": "Cuota del plan baja",
         "quotaAlertLine": "Cuota {window} restante: {remaining} %",
         "quotaWindowWeek": "semanal",
-        "quotaWindowMonth": "mensual"
+        "quotaWindowMonth": "mensual",
+        "notifyStepOne": "{n} paso"
     },
     "animNames": {
         "breathing": "Respiración en reposo",

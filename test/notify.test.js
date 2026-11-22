@@ -2,17 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     DEFAULT_NOTIFY,
-    cardTtl,
     channelDecision,
     classifyTurnEnd,
     createNotifierSound,
     createSystemNotifier,
-    emptyNotifyQueue,
     formatNotifyText,
     isSecureScope,
     notificationEnvironment,
     notifyDecision,
-    notifyQueueReducer,
+    shortHash,
+    systemTagFor,
     titleMark,
 } from '../src/client/notify.js';
 import { createActivitySystem } from '../src/client/activity.js';
@@ -83,6 +82,7 @@ const t = (key) => {
         notifyWaitBody: '等待你的审批或回答',
         notifyErrorBody: '回合发生错误',
         notifySteps: '{n} 步',
+        notifyStepOne: '{n} 步',
         notifyLimit: '达到长度上限',
     };
     return zh[key] || key;
@@ -111,7 +111,7 @@ test('turn/end 分类：只提示完成与失败', () => {
 
 // ---- 通道判定 --------------------------------------------------------------
 
-test('页面聚焦：当前会话出气泡，其它会话出卡片', () => {
+test('页面聚焦：当前会话与其它会话都出气泡（带会话名，点气泡切回）', () => {
     const base = {
         notify: DEFAULT_NOTIFY,
         visible: true,
@@ -123,12 +123,10 @@ test('页面聚焦：当前会话出气泡，其它会话出卡片', () => {
     assert.deepEqual(notifyDecision({ ...base, kind: 'done', sessionId: 's1', currentSessionId: 's1' }), {
         channel: 'bubble',
         title: false,
-        card: false,
     });
     assert.deepEqual(notifyDecision({ ...base, kind: 'done', sessionId: 's2', currentSessionId: 's1' }), {
-        channel: 'card',
+        channel: 'bubble',
         title: false,
-        card: true,
     });
 });
 
@@ -146,7 +144,7 @@ test('页面不可见：安全上下文且已授权走系统通知', () => {
     assert.equal(d.title, false);
 });
 
-test('系统通知不可用：有提示音走声音+标题，无提示音回前台补卡', () => {
+test('系统通知不可用：走提示音 + 标题圆点（通道只有声音兜底）', () => {
     const common = {
         kind: 'error',
         notify: DEFAULT_NOTIFY,
@@ -156,12 +154,7 @@ test('系统通知不可用：有提示音走声音+标题，无提示音回前�
         supported: true,
         permission: 'denied',
     };
-    assert.deepEqual(notifyDecision(common), { channel: 'sound', title: true, card: false });
-    assert.deepEqual(notifyDecision({ ...common, notify: { ...DEFAULT_NOTIFY, sound: false } }), {
-        channel: 'none',
-        title: true,
-        card: true,
-    });
+    assert.deepEqual(notifyDecision(common), { channel: 'sound', title: true });
 });
 
 test('非安全上下文（局域网 http）不会尝试系统通知', () => {
@@ -188,21 +181,20 @@ test('总开关关闭：完成/失败/待确认全部静默', () => {
         permission: 'granted',
     };
     for (const kind of ['done', 'error', 'waiting']) {
-        assert.deepEqual(
-            notifyDecision({ ...base, kind }),
-            { channel: 'none', title: false, card: false },
-            kind
-        );
+        assert.deepEqual(notifyDecision({ ...base, kind }), { channel: 'none', title: false }, kind);
         // 页面不可见也一样：关掉就是完全不打扰
         assert.equal(notifyDecision({ ...base, kind, visible: false, focused: false }).channel, 'none', kind);
     }
 });
 
-test('旧配置的单事件开关仍被尊重（升级后不突然变吵），未知 kind 静默', () => {
-    const off = { ...DEFAULT_NOTIFY, done: false };
+test('旧开发版细分开关不再读取（只有总开关），未知 kind 静默', () => {
+    // 0.2.0 开发版的 notify.done/error/waiting/system/sound 从未发布；
+    // 保留兼容会让旧值成为界面上无法清除的隐藏静音，因此只认 enabled。
+    const legacyOff = { ...DEFAULT_NOTIFY, done: false, sound: false };
     assert.equal(
-        notifyDecision({ kind: 'done', notify: off, visible: true, focused: true, secure: true }).channel,
-        'none'
+        notifyDecision({ kind: 'done', notify: legacyOff, visible: true, focused: true, secure: true })
+            .channel,
+        'bubble'
     );
     assert.equal(notifyDecision({ kind: 'nope', notify: DEFAULT_NOTIFY }).channel, 'none');
 });
@@ -220,12 +212,10 @@ test('低余额提醒（preferSystem）：系统通知可用时，聚焦也直�
     assert.deepEqual(channelDecision({ ...base, visible: true, focused: true }), {
         channel: 'system',
         title: false,
-        card: false,
     });
     assert.deepEqual(channelDecision({ ...base, visible: false, focused: false }), {
         channel: 'system',
         title: false,
-        card: false,
     });
     // 系统通知不可用：聚焦回到气泡，失焦回到提示音 + 标题
     const noPerm = { ...base, permission: 'denied' };
@@ -233,22 +223,7 @@ test('低余额提醒（preferSystem）：系统通知可用时，聚焦也直�
     assert.deepEqual(channelDecision({ ...noPerm, visible: false, focused: false }), {
         channel: 'sound',
         title: true,
-        card: false,
     });
-    // 关掉提示音：失焦退化为回前台补卡
-    assert.deepEqual(
-        channelDecision({
-            ...noPerm,
-            notify: { enabled: true, sound: false },
-            visible: false,
-            focused: false,
-        }),
-        {
-            channel: 'none',
-            title: true,
-            card: true,
-        }
-    );
 });
 test('余额全局提醒：聚焦只出气泡，失焦走系统/提示音', () => {
     const base = {
@@ -261,17 +236,14 @@ test('余额全局提醒：聚焦只出气泡，失焦走系统/提示音', () =
     assert.deepEqual(channelDecision({ ...base, visible: true, focused: true }), {
         channel: 'bubble',
         title: false,
-        card: false,
     });
     assert.deepEqual(channelDecision({ ...base, visible: true, focused: false }), {
         channel: 'system',
         title: false,
-        card: false,
     });
     assert.deepEqual(channelDecision({ ...base, visible: false, focused: false, permission: 'denied' }), {
         channel: 'sound',
         title: true,
-        card: false,
     });
 });
 
@@ -297,6 +269,18 @@ test('通知文案：完成带指标，失败带消息，等待有固定说明',
         title: '待确认',
         body: '等待你的审批或回答',
     });
+
+    // 单步：用单数模板，避免英文界面出现 "1 steps"
+    const singleEn = (key) => ({ notifyStepOne: '{n} step', notifySteps: '{n} steps' })[key] || key;
+    const one = formatNotifyText({ kind: 'done', summary: { steps: 1 } }, singleEn);
+    assert.equal(one.body, '1 step');
+    const many = formatNotifyText({ kind: 'done', summary: { steps: 2 } }, singleEn);
+    assert.equal(many.body, '2 steps');
+
+    // 错误摘要按 design 约定截断到 120 字符
+    const longError = formatNotifyText({ kind: 'error', message: 'x'.repeat(500) }, t);
+    assert.equal(longError.body.length, 120);
+    assert.ok(longError.body.endsWith('…'));
 });
 
 // ---- 系统通知适配器 --------------------------------------------------------
@@ -386,66 +370,29 @@ test('提示音：无 AudioContext 静默失败，有则 resume 后播放', () =
     assert.equal(state.started, 1);
 });
 
-// ---- 队列 ------------------------------------------------------------------
+// ---- 系统通知 tag ----------------------------------------------------------
 
-const card = (id, kind = 'done') => ({ id, kind, sessionId: 's1', title: '完成', meta: '' });
-
-test('队列：同屏最多 3 张，溢出排队；promote 后补显', () => {
-    let state = emptyNotifyQueue();
-    for (let i = 0; i < 3; i += 1)
-        state = notifyQueueReducer(state, { type: 'enqueue', card: card('c' + i) });
-    assert.equal(state.cards.filter((c) => c.status === 'shown').length, 3);
-    state = notifyQueueReducer(state, { type: 'enqueue', card: card('c3') });
-    assert.equal(state.cards.find((c) => c.id === 'c3').status, 'queued');
-    assert.equal(state.cards.filter((c) => c.status === 'shown').length, 3);
-
-    state = notifyQueueReducer(state, { type: 'dismiss', id: 'c0' });
-    state = notifyQueueReducer(state, { type: 'promote' });
-    assert.equal(state.cards.find((c) => c.id === 'c3').status, 'shown');
+test('系统通知 tag：<=16 字符、同会话同类稳定、不同会话/序号可区分', () => {
+    const done = systemTagFor({ kind: 'done', sessionId: 'session-a', seq: 42 });
+    const doneAgain = systemTagFor({ kind: 'done', sessionId: 'session-a', seq: 42 });
+    assert.ok(done.length <= 16, done);
+    assert.equal(done, doneAgain);
+    // 不同会话（即使 seq 相同）不能撞 tag（Windows toast 会同 tag 替换/限流）
+    assert.notEqual(done, systemTagFor({ kind: 'done', sessionId: 'session-b', seq: 42 }));
+    // 不同类别/不同回合可区分
+    assert.notEqual(done, systemTagFor({ kind: 'error', sessionId: 'session-a', seq: 42 }));
+    assert.notEqual(done, systemTagFor({ kind: 'done', sessionId: 'session-a', seq: 7 }));
+    // waiting：同会话稳定（替换而不是叠加），无 seq 也不撞
+    const wait = systemTagFor({ kind: 'waiting', sessionId: 'session-a' });
+    assert.equal(wait, systemTagFor({ kind: 'waiting', sessionId: 'session-a', seq: 99 }));
+    assert.ok(wait.length <= 16, wait);
+    assert.equal(wait, 'wpw' + shortHash('session-a'));
 });
 
-test('队列：重复 id 不重复入队；超出总上限丢旧卡', () => {
-    let state = emptyNotifyQueue();
-    state = notifyQueueReducer(state, { type: 'enqueue', card: card('a') });
-    state = notifyQueueReducer(state, { type: 'enqueue', card: card('a') });
-    assert.equal(state.cards.length, 1);
-    for (let i = 0; i < 10; i += 1)
-        state = notifyQueueReducer(state, { type: 'enqueue', card: card('x' + i) });
-    assert.equal(state.cards.length, 6);
-    // 淘汰策略：先丢最旧的排队卡，已显示的卡保留到自动消失
-    assert.deepEqual(
-        state.cards.map((c) => c.id),
-        ['a', 'x0', 'x1', 'x7', 'x8', 'x9']
-    );
-});
-
-test('队列：隐藏时强制排队；waiting 由 resolve 撤销', () => {
-    let state = emptyNotifyQueue();
-    state = notifyQueueReducer(state, {
-        type: 'enqueue',
-        card: card('w1', 'waiting'),
-        status: 'queued',
-    });
-    assert.equal(state.cards[0].status, 'queued');
-    state = notifyQueueReducer(state, {
-        type: 'enqueue',
-        card: { ...card('d1'), sessionId: 's1' },
-        status: 'queued',
-    });
-    state = notifyQueueReducer(state, { type: 'resolve', sessionId: 's1' });
-    assert.deepEqual(
-        state.cards.map((c) => c.id),
-        ['d1']
-    );
-});
-
-test('标题标记与自动消失时长', () => {
+test('标题标记', () => {
     assert.equal(titleMark(0), '');
     assert.equal(titleMark(1), '●');
     assert.equal(titleMark(3), '●(3)');
-    assert.equal(cardTtl('waiting'), 15000);
-    assert.equal(cardTtl('error'), 10000);
-    assert.equal(cardTtl('done'), 8000);
 });
 
 // ---- 感知层顺序：后台会话事件不能被子会话过滤吞掉 -------------------------
@@ -516,7 +463,7 @@ test('watchAllRunning：scope=current 时也为后台运行会话开 follow', as
 // 三个平台（Windows/macOS/Linux）都走标准 Notifications API；能否弹系统通知只由
 // 「安全上下文 + 权限 + 构造函数可用」决定。这里把每种环境显式跑一遍，保证任何
 // 平台分支都不会出现「既无系统通知、又无声音/标题」的静默失败。
-test('跨平台降级矩阵：任何环境都至少落到声音或标题/卡片', () => {
+test('跨平台降级矩阵：任何环境都至少落到声音或标题圆点', () => {
     const base = { kind: 'done', notify: DEFAULT_NOTIFY, visible: false, focused: false };
     const matrix = [
         // Windows Desktop / Web 本机
@@ -552,7 +499,7 @@ test('跨平台降级矩阵：任何环境都至少落到声音或标题/卡片'
     for (const row of matrix) {
         const decision = notifyDecision({ ...base, ...row.input });
         assert.equal(decision.channel, row.channel, row.name);
-        assert.ok(decision.channel !== 'none' || decision.title || decision.card, row.name + ' 不能静默失败');
+        assert.ok(decision.channel !== 'none' || decision.title, row.name + ' 不能静默失败');
     }
 });
 
@@ -600,10 +547,21 @@ test('子代理会话：只喂宠物动作，不派发提示与统计', () => {
                 event: { type: 'turn/end', seq: 4, data: { turn: 1, reason: { kind: 'completed' } } },
             });
             emit({ type: 'approval/requested', sessionId: 'child' });
+            // 子代理的 step/start 也不能进回合统计（否则每个子代理留一条未完成统计记录）
+            emit({
+                type: 'session/event',
+                sessionId: 'child',
+                event: { type: 'step/start', seq: 6, data: { turn: 1, step: 1 } },
+            });
             emit({
                 type: 'session/event',
                 sessionId: 'main',
-                event: { type: 'turn/end', seq: 5, data: { turn: 2, reason: { kind: 'completed' } } },
+                event: { type: 'step/start', seq: 7, data: { turn: 2, step: 1 } },
+            });
+            emit({
+                type: 'session/event',
+                sessionId: 'main',
+                event: { type: 'turn/end', seq: 8, data: { turn: 2, reason: { kind: 'completed' } } },
             });
             return () => {};
         },
@@ -613,14 +571,18 @@ test('子代理会话：只喂宠物动作，不派发提示与统计', () => {
         onNotify: (frame) => seen.push(['notify', frame.sessionId]),
         onTurn: (info) => seen.push(['turn', info.sessionId, info.seq]),
         onUsage: (usage, sessionId) => seen.push(['usage', sessionId]),
+        onStep: (sessionId) => seen.push(['step', sessionId]),
     });
     assert.deepEqual(
         seen,
         [
             ['notify', 'main'],
-            ['turn', 'main', 5],
+            ['step', 'main'],
+            // step/start 也会先经过 onNotify 统一派发（由 index.js 按事件类型过滤）
+            ['notify', 'main'],
+            ['turn', 'main', 8],
         ],
-        '子代理会话的完成/审批帧不能进提示与统计'
+        '子代理会话的完成/审批/步骤帧不能进提示与统计'
     );
     assert.ok(states.length >= 2, '子代理回合仍要驱动宠物动作');
     stop();

@@ -36,17 +36,15 @@ import {
 import {
     DEFAULT_NOTIFY,
     NOTIFY_KINDS,
-    cardTtl,
     channelDecision,
     classifyTurnEnd,
     createNotifierSound,
     createSystemNotifier,
-    emptyNotifyQueue,
     formatNotifyText,
     notificationEnvironment,
     notifyDecision,
-    notifyQueueReducer,
     shortHash,
+    systemTagFor,
     titleMark,
 } from './notify.js';
 
@@ -242,24 +240,6 @@ window.__ModuleLoader__.load({
             '.wp-menuItem{appearance:none;font:inherit;cursor:pointer;text-align:left;background:0 0;border:0;border-radius:7px;padding:7px 12px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
             '.wp-menuItem:hover{background:var(--dsw-alias-bg-module-platform)}',
             '.wp-menuItem:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
-            // ===== 回合完成提示：右侧通知卡（fixed 于视口，独立于桌宠舞台） =====
-            '.wp-notify-stack{position:fixed;right:16px;z-index:46;display:flex;flex-direction:column-reverse;gap:8px;pointer-events:none}',
-            '.wp-notify-card{position:relative;box-sizing:border-box;width:320px;max-width:calc(100vw - 32px);display:flex;align-items:stretch;gap:8px;padding:12px 8px 12px 14px;border:1px solid var(--dsw-alias-border-l2);border-left-width:3px;border-radius:12px;background:var(--dsw-alias-bg-layer-3);box-shadow:0 8px 24px rgba(0,0,0,.18);pointer-events:auto;color:var(--dsw-alias-label-primary);animation:wpNotifyIn .22s cubic-bezier(.2,.8,.2,1)}',
-            '.wp-notify-done{border-left-color:var(--dsw-alias-brand-primary)}',
-            '.wp-notify-error{border-left-color:var(--dsw-alias-label-error)}',
-            '.wp-notify-waiting{border-left-color:#d99a2b}',
-            '.wp-notify-balance{border-left-color:#d99a2b}',
-            '.wp-notify-main{appearance:none;border:0;background:0 0;font:inherit;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:0;border-radius:6px}',
-            '.wp-notify-head{display:flex;align-items:baseline;gap:8px;min-width:0}',
-            '.wp-notify-kind{font-size:13px;font-weight:600;white-space:nowrap}',
-            '.wp-notify-session{font-size:12px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
-            '.wp-notify-meta{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}',
-            '.wp-notify-open{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
-            '.wp-notify-close{appearance:none;border:0;background:0 0;color:var(--dsw-alias-label-tertiary);cursor:pointer;font-size:16px;line-height:1;padding:2px 8px;border-radius:6px;align-self:flex-start;flex:none}',
-            '.wp-notify-close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-module-platform)}',
-            '.wp-notify-main:focus-visible,.wp-notify-close:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
-            '@keyframes wpNotifyIn{from{opacity:0;transform:translateX(calc(100% + 16px))}to{opacity:1;transform:translateX(0)}}',
-            '@media (prefers-reduced-motion: reduce){.wp-notify-card{animation:none}}',
             // ===== 自定义动作区：目录路径 + 刷新按钮 + 规格/计数提示 =====
             '.wp-sf-customDir{display:flex;align-items:center;gap:8px;min-width:0}',
             '.wp-sf-customPath{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
@@ -811,20 +791,26 @@ window.__ModuleLoader__.load({
             var mm = String(d.getMinutes()).padStart(2, '0');
             return hh + ':' + mm;
         }
+        /** 额度窗口名：宿主只给稳定 key，展示名按当前界面语言翻译（5h 为通用写法）。 */
+        function quotaWindowLabel(window, labels) {
+            var key = String((window && window.key) || '').toLowerCase();
+            if (key === 'weekly') return (labels && labels.quotaWeek) || 'Weekly';
+            if (key === 'monthly') return (labels && labels.quotaMonth) || 'Monthly';
+            return (window && window.label) || '5h';
+        }
         /** 额度窗口摘要：5h 62% · 周 31%；没有可用窗口返回空串。 */
-        function quotaSummary(quota) {
+        function quotaSummary(quota, labels) {
             if (!quota || quota.status !== 'ready' || !Array.isArray(quota.windows)) return '';
             return quota.windows
                 .filter(
                     (w) =>
                         w &&
-                        w.label &&
                         w.usedPct !== null &&
                         w.usedPct !== undefined &&
                         Number.isFinite(Number(w.usedPct))
                 )
                 .slice(0, 2)
-                .map((w) => w.label + ' ' + Math.round(Number(w.usedPct)) + '%')
+                .map((w) => quotaWindowLabel(w, labels) + ' ' + Math.round(Number(w.usedPct)) + '%')
                 .join(' · ');
         }
 
@@ -858,7 +844,7 @@ window.__ModuleLoader__.load({
             if (mb.status === 'account-unavailable')
                 return head + (labels.accountUnavailable || labels.failed);
             if (mb.status === 'plan') {
-                var summary = quotaSummary(mb.quota);
+                var summary = quotaSummary(mb.quota, labels);
                 if (!summary && mb.quota && mb.quota.status === 'consent-required')
                     return head + (labels.consent || labels.plan || labels.unsupported);
                 return head + (summary || labels.plan || labels.unsupported);
@@ -870,7 +856,7 @@ window.__ModuleLoader__.load({
             if (mb.status === 'error') {
                 var clock = formatClock(mb.updatedAt);
                 var suffix = clock ? labels.stale.replace('{time}', clock) : reason || labels.failed;
-                if (clock && reason) suffix += '（' + reason + '）';
+                if (clock && reason) suffix += ' (' + reason + ')';
                 text += ' ' + suffix;
             }
             return text;
@@ -928,21 +914,6 @@ window.__ModuleLoader__.load({
             return h('span', { className: 'wp-balanceAmount' }, currency + ' ' + shown);
         }
 
-        // 诊断开关：默认关闭（宿主端 /whale-pet/api/debug 已移除，开启前需先恢复该路由）
-        var WP_DEBUG = false;
-        // 临时诊断：把通知链路的关键判定异步写到宿主日志（排查完删除）
-        function postDebug(payload) {
-            if (!WP_DEBUG) return;
-            try {
-                fetch('/whale-pet/api/debug', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(payload),
-                }).catch(function () {});
-            } catch (e) {
-                /* 诊断失败不影响主流程 */
-            }
-        }
         // 页面是否可见（把 document 访问收敛到一处，SSR/无 DOM 环境安全）
         function pageVisible() {
             return typeof document === 'undefined' || document.visibilityState !== 'hidden';
@@ -982,11 +953,15 @@ window.__ModuleLoader__.load({
             var ttl = Number.isFinite(ttlMs) ? ttlMs : LEADER_TTL_MS;
             return now - ts <= ttl;
         }
+        // localStorage 不可用（隐私模式/被禁用）时置位：单实例协调失效，
+        // 退化为「每个标签各自显示宠物」，而不是把所有标签都判成非主标签。
+        var leaderStorageBroken = false;
         function readLeaderRecord() {
             try {
                 var raw = window.localStorage.getItem(LEADER_KEY);
                 return raw ? JSON.parse(raw) : null;
             } catch (e) {
+                leaderStorageBroken = true;
                 return null;
             }
         }
@@ -994,7 +969,7 @@ window.__ModuleLoader__.load({
             try {
                 window.localStorage.setItem(LEADER_KEY, JSON.stringify({ id: id, ts: ts }));
             } catch (e) {
-                /* 隐私模式/存储被禁用：退化为每个标签各自显示（与旧行为一致） */
+                leaderStorageBroken = true;
             }
         }
         /**
@@ -1011,6 +986,10 @@ window.__ModuleLoader__.load({
                 var id = idRef.current;
                 var disposed = false;
                 var claim = () => {
+                    if (leaderStorageBroken) {
+                        setLeader(true);
+                        return;
+                    }
                     var now = Date.now();
                     var current = readLeaderRecord();
                     if (leaderRecordFresh(current, now)) {
@@ -1023,6 +1002,10 @@ window.__ModuleLoader__.load({
                         return;
                     }
                     writeLeaderRecord(id, now);
+                    if (leaderStorageBroken) {
+                        setLeader(true);
+                        return;
+                    }
                     // 写后回读：并发抢主时后写者胜，先写者在下一次 tick 让位
                     var check = readLeaderRecord();
                     setLeader(!!check && check.id === id);
@@ -1212,8 +1195,9 @@ window.__ModuleLoader__.load({
         // 旧版"安静"预设误带 10% 自主移动概率，迁移时把该份额还给动作池
         var LEGACY_QUIET_BEHAVIOR = { idleProb: 0.55, turnProb: 0.1, actProb: 0.25, moveProb: 0.1 };
         // 账户余额 Remote 的 client version：Platform 只作为 x-client-version 记录，
-        // 不参与余额语义；发版时随 package.json 更新。
-        var PLUGIN_CLIENT_VERSION = '0.2.0';
+        // 不参与余额语义。版本号由构建脚本从 package.json 注入（单一来源）；
+        // 直接以源码运行（node --test）时没有 define，回落到占位值。
+        var PLUGIN_CLIENT_VERSION = typeof __PLUGIN_VERSION__ === 'undefined' ? '0.2.0' : __PLUGIN_VERSION__;
         var DEFAULT_CONFIG = {
             visible: true,
             bubbles: true,
@@ -1517,70 +1501,6 @@ window.__ModuleLoader__.load({
         // 缺失时退化为纯自主链桌宠）。store：设置配置存储（null = 走代码默认）。
         // customStore：自定义动作存储（null = 不支持自定义动作）。
         // ============================================================================
-        // 回合完成提示：卡片组件（页面可见时的通道）
-        // ============================================================================
-        // 单张卡片：悬停暂停自动消失；点击主体打开会话，右上角 × 只关闭。
-        // 同一时刻最多 3 张（队列上限在 WhalePet 的 reducer 里控制）。
-        function NotifyCard({ card, t, onDismiss, onOpen }) {
-            var [hovered, setHovered] = useState(false);
-            useEffect(() => {
-                // 待确认卡片不自动消失：要留到用户处理或手动关闭
-                if (hovered || card.kind === 'waiting') return;
-                var timer = setTimeout(() => onDismiss(card.id), cardTtl(card.kind));
-                return () => clearTimeout(timer);
-            }, [card.id, card.kind, hovered, onDismiss]);
-            return h('div', {
-                className: 'wp-notify-card wp-notify-' + card.kind,
-                role: card.kind === 'error' ? 'alert' : 'status',
-                onMouseEnter: () => setHovered(true),
-                onMouseLeave: () => setHovered(false),
-                children: [
-                    h('button', {
-                        type: 'button',
-                        className: 'wp-notify-main',
-                        onClick: () => onOpen(card),
-                        children: [
-                            h('span', {
-                                className: 'wp-notify-head',
-                                children: [
-                                    h('span', { className: 'wp-notify-kind' }, card.title),
-                                    card.session &&
-                                        h('span', { className: 'wp-notify-session' }, card.session),
-                                ],
-                            }),
-                            card.meta && h('span', { className: 'wp-notify-meta' }, card.meta),
-                            h('span', { className: 'wp-notify-open' }, card.actionLabel || t('notifyOpen')),
-                        ],
-                    }),
-                    h('button', {
-                        type: 'button',
-                        className: 'wp-notify-close',
-                        'aria-label': t('notifyDismiss'),
-                        onClick: () => onDismiss(card.id),
-                        children: '×',
-                    }),
-                ],
-            });
-        }
-        // 通知栈：固定右侧、向上堆叠；bottom 由桌宠占位决定
-        function NotifyStack({ cards, t, onDismiss, onOpen, bottom }) {
-            var shown = (cards || []).filter((card) => card.status === 'shown');
-            if (!shown.length) return null;
-            return h('div', {
-                className: 'wp-notify-stack',
-                style: { bottom: bottom + 'px' },
-                children: shown.map((card) =>
-                    h(NotifyCard, {
-                        key: card.id,
-                        card: card,
-                        t: t,
-                        onDismiss: onDismiss,
-                        onOpen: onOpen,
-                    })
-                ),
-            });
-        }
-
         function WhalePet({
             config,
             api,
@@ -1738,6 +1658,8 @@ window.__ModuleLoader__.load({
             // 不能共用一个布尔：余额气泡被临时气泡替换时不会触发 mouseleave，
             // 会把 paused 永久留在 true（点"刷新余额"后一直停在刷新文案）。
             var [bubbleHovered, setBubbleHovered] = useState(false);
+            // 键盘 focus 也要暂停自动消失（气泡可 tab 聚焦，焦点在气泡上时不应消失）
+            var [bubbleFocused, setBubbleFocused] = useState(false);
             // 最近一次完成/待确认提示：右键菜单提供「回到该会话」的可靠入口
             var lastNotifyRef = useRef(null);
             // 待确认通知去重：宿主可能同时投递别名帧与状态帧，同会话 15s 内只提示一次
@@ -1872,6 +1794,17 @@ window.__ModuleLoader__.load({
             if (!balanceAlertRef.current) {
                 balanceAlertRef.current = readAlertStore(balanceStorageRef.current);
             }
+            // leader 接替时从 localStorage 重新读取提醒状态，避免用过期内存状态重复提醒。
+            useEffect(() => {
+                if (!isLeader) return;
+                balanceAlertRef.current = readAlertStore(balanceStorageRef.current);
+                var onStorage = (e) => {
+                    if (e && e.key && e.key !== BALANCE_ALERT_STORAGE_KEY) return;
+                    balanceAlertRef.current = readAlertStore(balanceStorageRef.current);
+                };
+                window.addEventListener('storage', onStorage);
+                return () => window.removeEventListener('storage', onStorage);
+            }, [isLeader]);
             var turnBalanceTimerRef = useRef(null);
             // ---- 每会话回合统计 ----
             // { turn, startedAt, endedAt, steps, usage, last }，按 sessionId 分开记。
@@ -1906,6 +1839,15 @@ window.__ModuleLoader__.load({
                     /* 隐私模式/配额满：统计仅保留在内存，不影响其他功能 */
                 }
             };
+            var clearTurnStats = (sessionId) => {
+                var storage = turnStatsStorage();
+                if (!storage || !sessionId) return;
+                try {
+                    storage.removeItem(turnStatsKeyOf(sessionId));
+                } catch (e) {
+                    /* 隐私模式/配额满：忽略 */
+                }
+            };
             var restoreTurnStats = (sessionId) => {
                 var storage = turnStatsStorage();
                 if (!storage || !sessionId) return null;
@@ -1926,6 +1868,25 @@ window.__ModuleLoader__.load({
                 st.usage = emptyUsage();
                 st.last = null;
             };
+            // 清理历史遗留的未结束回合记录（旧版本 endedAt>0 的记录、损坏数据、
+            // 超过 24h 的崩溃残留），避免 localStorage 键无限增长/误恢复。
+            var pruneTurnStats = () => {
+                var storage = turnStatsStorage();
+                if (!storage || typeof storage.key !== 'function') return;
+                try {
+                    var stale = [];
+                    for (var i = 0; i < storage.length; i += 1) {
+                        var key = storage.key(i);
+                        if (!key || key.indexOf(TURN_STATS_KEY + ':') !== 0) continue;
+                        var restored = sanitizeTurnStats(JSON.parse(storage.getItem(key) || 'null'));
+                        if (!restored || (restored.startedAt && Date.now() - restored.startedAt > 86400000))
+                            stale.push(key);
+                    }
+                    stale.forEach((key) => storage.removeItem(key));
+                } catch (e) {
+                    /* 隐私模式/损坏数据：忽略 */
+                }
+            };
             var turnStatsBySession = useRef(new Map());
             var statsOf = (sessionId) => {
                 var map = turnStatsBySession.current;
@@ -1942,13 +1903,15 @@ window.__ModuleLoader__.load({
                 return st;
             };
 
+            useEffect(() => {
+                pruneTurnStats();
+            }, []);
             // ---- 回合完成提示 ----
-            // 通道：系统通知 / 提示音 / 页内卡片；标题 `●` 为兜底（见 notify.js）。
+            // 通道：系统通知 / 提示音 / 页内气泡；标题 `●` 为兜底（见 notify.js）。
             var notifierRef = useRef(null);
             if (!notifierRef.current) notifierRef.current = createSystemNotifier();
             var notifySoundRef = useRef(null);
             if (!notifySoundRef.current) notifySoundRef.current = createNotifierSound();
-            var [notifyCards, setNotifyCards] = useState(() => emptyNotifyQueue());
             var [, setNotifyPermTick] = useState(0); // 权限可能在别处变更：回前台时强制重渲染
             var tPetRef = useRef(tPet);
             tPetRef.current = tPet;
@@ -1970,35 +1933,20 @@ window.__ModuleLoader__.load({
             };
             var openNotifySession = useCallback(
                 (sessionId) => {
-                    if (!sessionId) {
-                        postDebug({ event: 'open', ok: false, result: 'no-id' });
-                        return;
-                    }
-                    var result = 'none';
+                    if (!sessionId) return;
                     if (typeof openSession === 'function') {
                         try {
-                            result = openSession(sessionId) || 'undefined';
+                            if (openSession(sessionId) === 'ok') return;
                         } catch (e) {
-                            result = 'throw:' + ((e && e.message) || e);
+                            /* 回落到 uiWorkspace */
                         }
                     }
-                    if (result !== 'ok') {
-                        try {
-                            var ws = uiWorkspace;
-                            if (ws && typeof ws.openSession === 'function') {
-                                ws.openSession(sessionId);
-                                result = 'ws-ok';
-                            } else if (result === 'none') result = 'no-service';
-                        } catch (e) {
-                            result = 'ws-throw:' + ((e && e.message) || e);
-                        }
+                    try {
+                        var ws = uiWorkspace;
+                        if (ws && typeof ws.openSession === 'function') ws.openSession(sessionId);
+                    } catch (e) {
+                        /* 无可用导航服务：静默 */
                     }
-                    postDebug({
-                        event: 'open',
-                        ok: result === 'ok' || result === 'ws-ok',
-                        result: String(result),
-                        sessionId: String(sessionId).slice(0, 24),
-                    });
                 },
                 [uiWorkspace, openSession]
             );
@@ -2044,15 +1992,8 @@ window.__ModuleLoader__.load({
                             apiNow &&
                             typeof apiNow.isSubagentSession === 'function' &&
                             apiNow.isSubagentSession(entry.sessionId)
-                        ) {
-                            postDebug({
-                                event: 'notify-skip',
-                                reason: 'subagent',
-                                kind: entry.kind,
-                                sessionId: entry.sessionId,
-                            });
+                        )
                             return;
-                        }
                     } catch (e) {
                         /* 判定失败按普通会话处理 */
                     }
@@ -2062,64 +2003,34 @@ window.__ModuleLoader__.load({
                         waitingNotifyRef.current.set(entry.sessionId, Date.now());
                     }
                     var cfgNow = cfgRef.current || DEFAULT_CONFIG;
-                    var notifyCfg = cfgNow.notify || DEFAULT_NOTIFY;
-                    var notifier = notifierRef.current;
                     var decision = notifyDecision({
                         kind: entry.kind,
-                        notify: notifyCfg,
+                        notify: cfgNow.notify || DEFAULT_NOTIFY,
                         visible: pageVisible(),
                         focused: pageFocused(),
                         sessionId: entry.sessionId,
                         currentSessionId: currentSessionRef.current,
-                        secure: notifier.secureContext(),
-                        supported: notifier.supported(),
-                        permission: notifier.permission(),
+                        secure: notifierRef.current.secureContext(),
+                        supported: notifierRef.current.supported(),
+                        permission: notifierRef.current.permission(),
                     });
-                    postDebug({
-                        event: 'notify',
-                        kind: entry.kind,
-                        channel: decision.channel,
-                        perm: notifier.permission(),
-                        secure: notifier.secureContext(),
-                        supported: notifier.supported(),
-                        visible: pageVisible(),
-                        focused: pageFocused(),
-                        sameSession: entry.sessionId === currentSessionRef.current,
-                        sessionId: entry.sessionId,
-                    });
-                    if (decision.channel === 'none' && !decision.title && !decision.card) return;
+                    if (decision.channel === 'none') return;
                     var text = formatNotifyText(entry, tPetRef.current);
                     var sessionName = sessionTitleOf(entry.sessionId);
-                    var visibleNow = pageVisible() && pageFocused();
                     var chime = () => {
-                        if (notifyCfg.sound === false) return;
                         notifySoundRef.current.prime();
-                        postDebug({ event: 'chime', ok: notifySoundRef.current.play() });
+                        notifySoundRef.current.play();
                     };
-                    // 页面不可见：系统通知是主通道；不管是否送达都补一声提示音
+                    // 页面不可见：系统通知是主通道；发不出去（限流/构造失败/未授权/权限竞态）
+                    // 才降级一次为「提示音 + 标题圆点」，避免同一条提示响两声。
                     if (decision.channel === 'system') {
-                        postDebug({
-                            event: 'sys-payload',
-                            title: (sessionName ? text.title + ' · ' + sessionName : text.title).slice(
-                                0,
-                                120
-                            ),
-                            body: String(text.body || '').slice(0, 120),
-                            tag: 'whale-pet:' + entry.kind + ':' + (entry.sessionId || ''),
-                        });
-                        var sent = notifier.send({
+                        var sent = notifierRef.current.send({
                             title: sessionName ? text.title + ' · ' + sessionName : text.title,
                             body: text.body,
                             icon: '/whale-pet/poster/icon.png',
-                            // Windows toast 的 Tag 上限很短（16 字符），长 tag 会被静默丢弃；
-                            // 去重已由 seq 逻辑负责，这里只用短且唯一的 tag。
-                            tag:
-                                entry.kind === 'waiting'
-                                    ? 'wp-wait-' + shortHash(entry.sessionId || '')
-                                    : 'wp-' +
-                                      entry.kind +
-                                      '-' +
-                                      String(entry.seq === undefined ? Date.now() : entry.seq).slice(-8),
+                            // Windows toast Tag 上限 16 字符；tag 里带会话短哈希，
+                            // 不同会话同 seq 时也不会互相替换/限流丢弃（见 systemTagFor）。
+                            tag: systemTagFor(entry),
                             requireInteraction: entry.kind === 'waiting',
                             onClick: () => {
                                 // Electron 不保证置顶，尽力而为；浏览器会自己聚焦标签
@@ -2131,11 +2042,11 @@ window.__ModuleLoader__.load({
                                 openNotifySession(entry.sessionId);
                             },
                         });
-                        postDebug({ event: 'sys-send', ok: sent, kind: entry.kind });
                         chime();
                         if (sent) return;
+                        bumpNotifyTitle();
+                        return;
                     }
-                    // 系统通知不可用（未授权/非安全上下文/被限流）：安静兜底为标题 + 声音
                     if (decision.channel === 'sound') {
                         chime();
                         if (decision.title) bumpNotifyTitle();
@@ -2152,11 +2063,9 @@ window.__ModuleLoader__.load({
                         at: Date.now(),
                     };
                     if (entry.sessionId) msg += ' · ' + tPetRef.current('notifyBubbleHint');
-                    // 当前会话且正看着：只出气泡不响；其他情况都补一声
-                    if (entry.kind !== 'done' || !visibleNow || entry.sessionId !== currentSessionRef.current)
-                        chime();
+                    // 当前会话的「完成」只出气泡不响；其它情况（失败/待确认/其它会话）补一声
+                    if (entry.kind !== 'done' || entry.sessionId !== currentSessionRef.current) chime();
                     showNotifyBubble(msg, entry.sessionId, entry.kind === 'waiting');
-                    if (!visibleNow) bumpNotifyTitle();
                     if (!dragRef.current.active && !hideRef.current.active) {
                         playNext(
                             entry.kind === 'error'
@@ -2170,26 +2079,9 @@ window.__ModuleLoader__.load({
                 },
                 [showNotifyBubble, bumpNotifyTitle, openNotifySession, playNext]
             );
-            var dismissNotify = useCallback(
-                (id) => setNotifyCards((q) => notifyQueueReducer(q, { type: 'dismiss', id: id })),
-                []
-            );
-            var openNotifyCard = useCallback(
-                (card) => {
-                    if (!card) return;
-                    setNotifyCards((q) => notifyQueueReducer(q, { type: 'dismiss', id: card.id }));
-                    if (card.kind === 'balance') {
-                        showMeterBubble();
-                        return;
-                    }
-                    openNotifySession(card.sessionId);
-                },
-                [openNotifySession]
-            );
             // 用户第一次指针操作时创建/恢复 AudioContext（浏览器自动播放限制）
             useEffect(() => {
                 if (typeof window === 'undefined') return;
-                postDebug({ event: 'boot', notify: true, v: 4 });
                 var prime = () => {
                     if (notifySoundRef.current) notifySoundRef.current.prime();
                 };
@@ -2201,7 +2093,6 @@ window.__ModuleLoader__.load({
                 if (!isLeader || typeof document === 'undefined') return;
                 var sync = () => {
                     if (pageVisible() && pageFocused()) {
-                        setNotifyCards((q) => notifyQueueReducer(q, { type: 'promote' }));
                         resetNotifyTitle();
                         setNotifyPermTick((n) => n + 1);
                     }
@@ -2239,6 +2130,8 @@ window.__ModuleLoader__.load({
                     accountUnavailable: tPet('meterAccountUnavailable'),
                     plan: tPet('meterPlan'),
                     loading: tPet('meterLoading'),
+                    quotaWeek: tPet('quotaWindowWeek'),
+                    quotaMonth: tPet('quotaWindowMonth'),
                     errors: {
                         network: tPet('meterErrorNetwork'),
                         timeout: tPet('meterErrorTimeout'),
@@ -2280,9 +2173,8 @@ window.__ModuleLoader__.load({
                     if (!text || !text.title) return;
                     var o = opts || {};
                     var cfgNow = cfgRef.current || DEFAULT_CONFIG;
-                    var notifyCfg = cfgNow.notify || DEFAULT_NOTIFY;
                     var notifier = notifierRef.current;
-                    // Windows toast 的 Tag 上限很短，用稳定短 tag：同一来源重复提醒时替换而不是叠加
+                    // 同一来源重复提醒时替换而不是叠加（tag 稳定且 <=16 字符）
                     var tag = o.tag || 'wp-alert';
                     var focusedNow = pageVisible() && pageFocused();
                     var showAlertBubble = () =>
@@ -2291,6 +2183,10 @@ window.__ModuleLoader__.load({
                             seq: Date.now(),
                             sticky: !!cfgNow.meter,
                         });
+                    var playChime = () => {
+                        notifySoundRef.current.prime();
+                        notifySoundRef.current.play();
+                    };
                     var openAlert = () => {
                         try {
                             window.focus();
@@ -2301,7 +2197,6 @@ window.__ModuleLoader__.load({
                         else showBubble(text.title + ' · ' + text.body);
                     };
                     var decision = channelDecision({
-                        notify: notifyCfg,
                         visible: pageVisible(),
                         focused: pageFocused(),
                         sessionScoped: false,
@@ -2320,46 +2215,28 @@ window.__ModuleLoader__.load({
                             requireInteraction: false,
                             onClick: openAlert,
                         });
-                        postDebug({ event: 'sys-send', ok: sent, kind: o.kind || 'balance' });
                         if (sent) {
                             // 页面聚焦时再补一条页内气泡：双重可见，切回来也还有记录
                             if (focusedNow) showAlertBubble();
                             return;
                         }
-                        // 被限流/构造失败：按"系统通知不可用"继续兜底
-                        decision =
-                            notifyCfg.sound !== false
-                                ? { channel: 'sound', title: !focusedNow, card: false }
-                                : { channel: 'none', title: !focusedNow, card: true };
-                    }
-                    if (decision.channel === 'sound') {
-                        notifySoundRef.current.prime();
-                        notifySoundRef.current.play();
-                        if (decision.title) bumpNotifyTitle();
+                        // 被限流/构造失败：聚焦补页内气泡（只响一声）；失焦提示音 + 标题圆点
+                        if (focusedNow) {
+                            showAlertBubble();
+                            playChime();
+                            return;
+                        }
+                        playChime();
+                        bumpNotifyTitle();
                         return;
                     }
                     if (decision.channel === 'bubble') {
                         showAlertBubble();
                         return;
                     }
-                    if (decision.card || decision.channel === 'card') {
-                        setNotifyCards((q) =>
-                            notifyQueueReducer(q, {
-                                type: 'enqueue',
-                                card: {
-                                    id: tag,
-                                    kind: o.kind || 'balance',
-                                    sessionId: null,
-                                    title: text.title,
-                                    session: o.sourceLabel || '',
-                                    meta: text.body,
-                                    actionLabel: tPetRef.current(o.actionLabel || 'balanceView'),
-                                },
-                                status: pageVisible() ? 'shown' : 'queued',
-                            })
-                        );
-                        if (decision.title) bumpNotifyTitle();
-                    }
+                    // sound
+                    playChime();
+                    if (decision.title) bumpNotifyTitle();
                 },
                 [showMeterBubble, bumpNotifyTitle]
             );
@@ -2368,8 +2245,6 @@ window.__ModuleLoader__.load({
                     if (!alerts || !alerts.length) return;
                     dispatchAlertText(formatBalanceAlert(alerts, mb.providerLabel, tPetRef.current), {
                         tag: 'wp-bal-' + shortHash(sourceKey(mb.source, mb.provider)),
-                        sourceLabel: mb.providerLabel,
-                        kind: 'balance',
                     });
                 },
                 [dispatchAlertText]
@@ -2379,9 +2254,6 @@ window.__ModuleLoader__.load({
                     if (!alerts || !alerts.length) return;
                     dispatchAlertText(formatQuotaAlert(alerts, providerLabel, tPetRef.current), {
                         tag: 'wp-quo-' + shortHash('quota:' + String(provider || 'unknown')),
-                        sourceLabel: providerLabel,
-                        // 卡片沿用余额卡片：点击即可打开余额/额度气泡。
-                        kind: 'balance',
                     });
                 },
                 [dispatchAlertText]
@@ -2418,8 +2290,12 @@ window.__ModuleLoader__.load({
             };
             // 套餐额度独立拉取：Codex 读本地日志；OpenCode/GLM 走官方 quota 接口。
             var refreshQuota = useCallback(
-                (mb, queryBase, seq) => {
-                    fetch('/whale-pet/api/balance?mode=quota' + queryBase.replace('?', '&'))
+                (mb, queryBase, seq, force) => {
+                    fetch(
+                        '/whale-pet/api/balance?mode=quota' +
+                            queryBase.replace('?', '&') +
+                            (force ? '&force=1' : '')
+                    )
                         .then((r) => r.json())
                         .then((d) => {
                             if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
@@ -2521,7 +2397,7 @@ window.__ModuleLoader__.load({
                                     mb.quota = null;
                                     mb.failures = 0;
                                     showMeterBubble();
-                                    refreshQuota(mb, queryBase, seq);
+                                    refreshQuota(mb, queryBase, seq, options.force);
                                     return;
                                 }
                                 if (d && d.unsupported) {
@@ -2639,7 +2515,7 @@ window.__ModuleLoader__.load({
                             mb.quota = null;
                             mb.failures = 0;
                             showMeterBubble();
-                            refreshQuota(mb, queryBase, seq);
+                            refreshQuota(mb, queryBase, seq, options.force);
                             return;
                         }
                         if (d.source === 'unsupported') {
@@ -2670,7 +2546,7 @@ window.__ModuleLoader__.load({
                         } else if (mb.source === 'plan') {
                             mb.status = 'plan';
                             showMeterBubble();
-                            refreshQuota(mb, queryBase, seq);
+                            refreshQuota(mb, queryBase, seq, options.force);
                         } else if (mb.source === 'unsupported') {
                             mb.status = 'unsupported';
                             showMeterBubble();
@@ -2957,10 +2833,11 @@ window.__ModuleLoader__.load({
                         if (el.classList.contains('is-front')) el.play().catch(() => {});
                     }
                 });
-                // 回到前台补一次余额（后台期间被 pageVisible 拦下的轮询）
+                // 回到前台补一次余额（后台期间被 pageVisible 拦下的轮询）；仅主标签
+                if (!isLeader) return;
                 var c = cfgRef.current;
                 if (c && (c.meter || (c.balance && c.balance.alert))) refreshBalance();
-            }, [docVisible]);
+            }, [docVisible, isLeader]);
 
             // ---- 桌宠层恢复：visible=false 或设置页在场时组件 return null，
             // 两个 <video> 被卸载；恢复后元素是新建的（src 为空），而 playing 未变、
@@ -2968,7 +2845,9 @@ window.__ModuleLoader__.load({
             // 这里统一处理两种收起方式：重新显示时补加载当前动画。 ----
             var prevHiddenRef = useRef(true);
             useEffect(() => {
-                var hiddenNow = (cfg && cfg.visible === false) || settingsPanelVisible;
+                // 非主标签也不渲染桌宠层（视频被卸载）；当选主标签后必须补加载当前动画，
+                // 否则接替标签只剩气泡/菜单，宠物透明直到下一次交互。
+                var hiddenNow = (cfg && cfg.visible === false) || settingsPanelVisible || !isLeader;
                 var was = prevHiddenRef.current;
                 prevHiddenRef.current = hiddenNow;
                 if (!hiddenNow && was) {
@@ -2977,7 +2856,7 @@ window.__ModuleLoader__.load({
                         if (pendingMoveRef.current) startDrive(el);
                     });
                 }
-            }, [cfg && cfg.visible, settingsPanelVisible, playing]);
+            }, [cfg && cfg.visible, settingsPanelVisible, isLeader, playing]);
 
             // ---- 事件感知 + 意图仲裁（感知层 → 决策层 → 播放器） ----
             // 有 api（connection 服务）才接入；缺失时退化为纯自主链桌宠。
@@ -3070,12 +2949,6 @@ window.__ModuleLoader__.load({
                 var unsub = arbiter.subscribe(onIntent);
                 // 初始同步一次当前意图（让 intentRef 就位）
                 unsub && onIntent(INTENT.IDLE);
-                postDebug({
-                    event: 'sensor-start',
-                    subscribe: !!(api && api.subscribeActivity),
-                    events: !!(api && api.events),
-                    notifyActive: notifyActive,
-                });
                 var stop = startActivitySensor(api, (state) => arbiter.update(state.active), {
                     scope: cfgRef.current?.scope,
                     // 子代理（subagent）会话只喂宠物动作：完成/失败/审批都不提示
@@ -3131,15 +3004,10 @@ window.__ModuleLoader__.load({
                         }
                         st.endedAt = info.at;
                         if (Number(info.turn) > 0) st.turn = Math.round(Number(info.turn));
-                        postDebug({
-                            event: 'turn-end',
-                            seq: info.seq,
-                            sessionId: info.sessionId,
-                            reason: info.reason && info.reason.kind,
-                        });
                         var summary = summarizeTurn(st);
                         st.last = summary;
-                        saveTurnStats(info.sessionId, st);
+                        // 回合已结束：删除未结束回合的持久化记录（否则每个会话永久留一个 key）
+                        clearTurnStats(info.sessionId);
                         var cls = classifyTurnEnd(info.reason);
                         if (cls) {
                             enqueueNotify({
@@ -3167,9 +3035,6 @@ window.__ModuleLoader__.load({
                         if (ev.type === 'approval/requested' || ev.type === 'question/requested') {
                             enqueueNotify({ kind: 'waiting', sessionId: frame.sessionId, seq: ev.seq });
                         } else if (ev.type === 'approval/resolved' || ev.type === 'question/resolved') {
-                            setNotifyCards((q) =>
-                                notifyQueueReducer(q, { type: 'resolve', sessionId: frame.sessionId })
-                            );
                             waitingNotifyRef.current.delete(frame.sessionId);
                             // 待确认气泡常驻：处理完自动撤掉
                             setBubble((b) => (b && b.sticky && b.sessionId === frame.sessionId ? null : b));
@@ -3299,6 +3164,7 @@ window.__ModuleLoader__.load({
             // 旧节点"补发 mouseleave，若不重置，新气泡就永远等不到消失定时器。
             useEffect(() => {
                 setBubbleHovered(false);
+                setBubbleFocused(false);
             }, [bubble && bubble.seq]);
 
             // 临时气泡出现时余额气泡会被隐藏；此时余额气泡不会收到 mouseleave，
@@ -3309,10 +3175,10 @@ window.__ModuleLoader__.load({
 
             // ---- 气泡定时消失（临时气泡 3.6s；常驻额度气泡 sticky 不自动消失） ----
             useEffect(() => {
-                if (!bubble || bubble.sticky || bubbleHovered) return;
+                if (!bubble || bubble.sticky || bubbleHovered || bubbleFocused) return;
                 var id = setTimeout(() => setBubble(null), bubble.ttl || 3600);
                 return () => clearTimeout(id);
-            }, [bubble, bubbleHovered]);
+            }, [bubble, bubbleHovered, bubbleFocused]);
 
             // ---- 组件卸载：清理移动 rAF 与惯性滑行 ----
             useEffect(
@@ -4108,7 +3974,7 @@ window.__ModuleLoader__.load({
             };
 
             // ============================================================================
-            // 右键菜单—— 回家 / 打开设置 / 隐藏
+            // 右键菜单—— 回家 / 刷新余额 / 打开设置 / 隐藏（近 2 分钟有完成提示时多一项「回到完成的会话」）
             // ============================================================================
             var closeMenu = () => {
                 setMenu(null);
@@ -4165,64 +4031,7 @@ window.__ModuleLoader__.load({
                     fallback();
                 }
             };
-            // 临时：右键「测试通知」——单独验证系统通知与提示音，不依赖回合时序
-            var menuTestNotify = () => {
-                setMenu(null);
-                var sent = notifierRef.current.send({
-                    title: '鲸鱼桌宠 · 测试通知',
-                    body: '看到这条说明 Windows 通知通道正常',
-                    icon: '/whale-pet/poster/icon.png',
-                    tag: 'whale-pet:test',
-                    silent: false,
-                });
-                postDebug({ event: 'test-send', ok: sent, perm: notifierRef.current.permission() });
-                notifySoundRef.current.prime();
-                postDebug({ event: 'test-chime', ok: notifySoundRef.current.play() });
-                showBubble(
-                    sent ? '测试通知已发送' : '系统通知不可用（' + notifierRef.current.permission() + '）'
-                );
-            };
-            // 临时：对比测试 B——真实标题/正文 + 长 tag，不带 onClick
-            var menuTestNotifyB = () => {
-                setMenu(null);
-                showBubble('10 秒后发送对比 B，请切走');
-                setTimeout(() => {
-                    var okSent = notifierRef.current.send({
-                        title: '完成 · 设计任务完成提示功能',
-                        body: '492k tokens',
-                        icon: '/whale-pet/poster/icon.png',
-                        tag: 'whale-pet:done:session-a9c66958-2c9c-4bd6-8531-7ba066b20624',
-                        requireInteraction: false,
-                        silent: false,
-                    });
-                    postDebug({ event: 'delayed-b', ok: okSent });
-                }, 10000);
-            };
-            // 临时：10 秒后再发系统通知，便于切走后验证「页面不可见」路径
-            var menuTestNotifyDelayed = () => {
-                setMenu(null);
-                showBubble('10 秒后发送测试通知，请切走');
-                setTimeout(() => {
-                    var okSent = notifierRef.current.send({
-                        title: '完成 · 设计任务完成提示功能',
-                        body: '492k tokens',
-                        icon: '/whale-pet/poster/icon.png',
-                        tag: 'whale-pet:done:test-session',
-                        requireInteraction: false,
-                        silent: false,
-                        onClick: () => postDebug({ event: 'delayed-click' }),
-                    });
-                    postDebug({
-                        event: 'delayed-send',
-                        ok: okSent,
-                        visible: pageVisible(),
-                        focused: pageFocused(),
-                    });
-                    notifySoundRef.current.prime();
-                    notifySoundRef.current.play();
-                }, 10000);
-            };
-            // 刷新余额：account → Remote；wallet → force；plan/未授权只更新状态。
+            // 刷新余额：account → Remote；wallet → force；plan/未授权只更新状态。            // 刷新余额：account → Remote；wallet → force；plan/未授权只更新状态。
             var menuRefreshBalance = () => {
                 setMenu(null);
                 if (!currentModelRef.current.route) {
@@ -4243,11 +4052,11 @@ window.__ModuleLoader__.load({
             //   2) 退化到 layout.selectPanel('plugins') 切到「插件」主面板；
             //   3) 进入列表/详情后按「行标题/包名」点「查看」→「配置」；
             //   4) 全都失败才高亮本插件行 + 气泡提示。
-            // 开关（启用/停用）与卸载按钮要排除：开关有 role=switch/aria-checked，
-            // 卸载按钮按各语言动词排除；其余名称匹配项就是「查看」/「配置」。
-            var ENABLE_LABEL = /(启用|Enable|Activar|Activer|Aktivieren|Включить|Ativar|有効化|开启)/i;
-            var UNINSTALL_LABEL =
-                /(卸载|Uninstall|Desinstalar|Désinstaller|Deinstallieren|Удалить|アンインストール)/i;
+            // 只点「查看 / 配置」动词的按钮：详情页头部还有「更新 / 卸载 / 启用」等
+            // aria-label 同样含插件名的按钮（更新在行按钮之前），白名单避免误点更新流程。
+            var ROW_OPEN_LABEL = /(查看|View|Ver|Voir|Ansehen|Открыть|表示)/i;
+            var ROW_CONFIGURE_LABEL =
+                /(配置|设置|Configure|Configurar|Configurer|Konfigurieren|Настроить|設定)/i;
             var serviceOf = (name) => {
                 if (typeof getHostService === 'function') {
                     var service = getHostService(name);
@@ -4260,9 +4069,14 @@ window.__ModuleLoader__.load({
                 // 本插件的 locale/*.json，正常情况下与 tPet('title') 相同）。
                 var names = [PACKAGE_NAME, 'whale-pet', tPet('title')];
                 var buttons = document.querySelectorAll('button[aria-label]');
+                var configureHit = null;
+                var openHit = null;
                 for (var i = 0; i < buttons.length; i += 1) {
                     var button = buttons[i];
                     if (button.offsetParent === null) continue;
+                    if (button.disabled === true) continue;
+                    if (button.getAttribute('role') === 'switch') continue;
+                    if (button.getAttribute('aria-checked') !== null) continue;
                     var label = button.getAttribute('aria-label') || '';
                     var lower = label.toLowerCase();
                     var matched = false;
@@ -4271,12 +4085,14 @@ window.__ModuleLoader__.load({
                         if (name && lower.indexOf(name) !== -1) matched = true;
                     }
                     if (!matched) continue;
-                    if (button.getAttribute('role') === 'switch') continue;
-                    if (button.getAttribute('aria-checked') !== null) continue;
-                    if (UNINSTALL_LABEL.test(label) || ENABLE_LABEL.test(label)) continue;
-                    return button;
+                    // 「配置」优先（详情页），其次「查看」（列表页）；更新/卸载/开关一律不点
+                    if (ROW_CONFIGURE_LABEL.test(label)) {
+                        if (!configureHit) configureHit = button;
+                    } else if (ROW_OPEN_LABEL.test(label)) {
+                        if (!openHit) openHit = button;
+                    }
                 }
-                return null;
+                return configureHit || openHit;
             };
             var goPetConfigPage = () => {
                 var opened = false;
@@ -4600,13 +4416,14 @@ window.__ModuleLoader__.load({
                                 (bubble.sessionId ? ' wp-bubble-notify' : ''),
                             onMouseEnter: () => setBubbleHovered(true),
                             onMouseLeave: () => setBubbleHovered(false),
+                            onFocus: () => setBubbleFocused(true),
+                            onBlur: () => setBubbleFocused(false),
                             role: bubble.sessionId ? 'button' : 'status',
                             style: bubble.sessionId ? { pointerEvents: 'auto', zIndex: 47 } : undefined,
                             tabIndex: bubble.sessionId ? 0 : undefined,
                             title: bubble.sessionId ? tPet('notifyOpen') : undefined,
                             onClick: bubble.sessionId
                                 ? () => {
-                                      postDebug({ event: 'bubble-click', sessionId: bubble.sessionId });
                                       openNotifySession(bubble.sessionId);
                                   }
                                 : undefined,
@@ -4645,24 +4462,43 @@ window.__ModuleLoader__.load({
                             var mb = balanceBubble.mb || {};
                             var amountKeyOf = (item) =>
                                 (mb.source || '') + ':' + (mb.provider || '') + ':' + item.currency;
+                            var windowLabelOf = (w) => {
+                                var key = String((w && w.key) || '').toLowerCase();
+                                if (key === 'weekly') return tPet('quotaWindowWeek');
+                                if (key === 'monthly') return tPet('quotaWindowMonth');
+                                return (w && w.label) || '5h';
+                            };
                             var quotaRows =
                                 mb.quota && mb.quota.status === 'ready' && Array.isArray(mb.quota.windows)
                                     ? mb.quota.windows.map((w) => {
-                                          var used = Math.max(0, Math.min(100, Number(w.usedPct) || 0));
+                                          // 只有重置时间、没有用量百分比的窗口：显示「—」而不是伪造 0%
+                                          var hasUsed =
+                                              w.usedPct !== null &&
+                                              w.usedPct !== undefined &&
+                                              Number.isFinite(Number(w.usedPct));
+                                          var used = hasUsed
+                                              ? Math.max(0, Math.min(100, Number(w.usedPct)))
+                                              : null;
                                           return h('div', { key: w.key, className: 'wp-balanceQuotaRow' }, [
-                                              h('span', { className: 'wp-balanceQuotaLabel' }, w.label),
                                               h(
                                                   'span',
-                                                  { className: 'wp-balanceQuotaBar' },
-                                                  h('span', {
-                                                      className: 'wp-balanceQuotaFill',
-                                                      style: { width: used + '%' },
-                                                  })
+                                                  { className: 'wp-balanceQuotaLabel' },
+                                                  windowLabelOf(w)
                                               ),
+                                              hasUsed
+                                                  ? h(
+                                                        'span',
+                                                        { className: 'wp-balanceQuotaBar' },
+                                                        h('span', {
+                                                            className: 'wp-balanceQuotaFill',
+                                                            style: { width: used + '%' },
+                                                        })
+                                                    )
+                                                  : h('span', { className: 'wp-balanceQuotaBar' }),
                                               h(
                                                   'span',
                                                   { className: 'wp-balanceQuotaPct' },
-                                                  Math.round(used) + '%'
+                                                  hasUsed ? Math.round(used) + '%' : '—'
                                               ),
                                               w.resetAt
                                                   ? h(
@@ -4813,39 +4649,6 @@ window.__ModuleLoader__.load({
                                         },
                                         tPet('menuBackToDone')
                                     ),
-                                WP_DEBUG &&
-                                    h(
-                                        'button',
-                                        {
-                                            type: 'button',
-                                            role: 'menuitem',
-                                            className: 'wp-menuItem',
-                                            onClick: menuTestNotify,
-                                        },
-                                        '测试通知'
-                                    ),
-                                WP_DEBUG &&
-                                    h(
-                                        'button',
-                                        {
-                                            type: 'button',
-                                            role: 'menuitem',
-                                            className: 'wp-menuItem',
-                                            onClick: menuTestNotifyDelayed,
-                                        },
-                                        '10 秒后测试通知'
-                                    ),
-                                WP_DEBUG &&
-                                    h(
-                                        'button',
-                                        {
-                                            type: 'button',
-                                            role: 'menuitem',
-                                            className: 'wp-menuItem',
-                                            onClick: menuTestNotifyB,
-                                        },
-                                        '10 秒后测试 B'
-                                    ),
                                 h(
                                     'button',
                                     {
@@ -4870,20 +4673,7 @@ window.__ModuleLoader__.load({
                         }),
                 ],
             });
-            // 通知栈独立于桌宠：宠物被隐藏时仍然要能收到完成提示
-            var notifyBottom = petVisible && corner.indexOf('bottom') === 0 ? Math.round(stageH) + 16 : 16;
-            return h(
-                react.Fragment,
-                null,
-                petVisible ? petRoot : null,
-                h(NotifyStack, {
-                    cards: notifyCards.cards,
-                    t: tPet,
-                    onDismiss: dismissNotify,
-                    onOpen: openNotifyCard,
-                    bottom: notifyBottom,
-                })
-            );
+            return petVisible ? petRoot : null;
         }
 
         // ============================================================================
@@ -5005,6 +4795,7 @@ window.__ModuleLoader__.load({
                 notifyWaitBody: '等待你的审批或回答',
                 notifyErrorBody: '回合发生错误',
                 notifySteps: '{n} 步',
+                notifyStepOne: '{n} 步',
                 notifyLimit: '达到长度上限',
                 notifyOpen: '打开会话',
                 notifyBubbleHint: '点击回会话',
@@ -5299,6 +5090,7 @@ window.__ModuleLoader__.load({
                 notifyWaitBody: 'Waiting for your approval or answer',
                 notifyErrorBody: 'The turn ended with an error',
                 notifySteps: '{n} steps',
+                notifyStepOne: '{n} step',
                 notifyLimit: 'hit the length limit',
                 notifyOpen: 'Open session',
                 notifyBubbleHint: 'click to open',
@@ -5506,6 +5298,7 @@ window.__ModuleLoader__.load({
             },
         };
         // 文字气泡文案池（按意图键，zh/en；意图切换时随机一句，IDLE 低频闲聊）
+        // 文字气泡文案池（按意图键，八种内置语言；意图切换时随机一句，IDLE 低频闲聊）
         var BUBBLES = {
             zh: {
                 working: ['工作中…', '加油加油！', '让我看看'],
@@ -5528,6 +5321,77 @@ window.__ModuleLoader__.load({
                 listening: ['I am listening~', 'Mhm, and then?'],
                 error: ['Oops, something went wrong!', 'That did not work…', 'Let me try again!'],
                 idle: ['So bored…', 'Nice weather today', 'When are you back?', 'Phew — taking a break'],
+            },
+            ja: {
+                working: ['作業中…', 'がんばれ！', 'ちょっと見てみるね'],
+                coding: ['コーディング中…', 'このバグ、面白いね', 'いいコードだね'],
+                reading: ['読書中…', 'このファイル長いね', 'なるほど…'],
+                researching: ['調べ中…', 'ちょっと検索してみる', 'ネットではこう言ってるよ'],
+                thinking: ['考え中…', 'ちょっと考えるね…', 'うーん——'],
+                waitingUser: ['返事待ってるよ~', 'どう思う？', 'ここで待ってるね'],
+                listening: ['どうぞ、聞いてるよ~', 'うんうん、それで？'],
+                error: ['あっ、エラーだ！', 'さっきはうまくいかなかった…', 'もう一回やってみる！'],
+                idle: ['ひまー…', 'いい天気だね', 'いつ帰ってくるの？', 'ふー、休憩しよ'],
+            },
+            es: {
+                working: ['Trabajando…', '¡Vamos vamos!', 'Déjame ver'],
+                coding: ['Programando…', 'Este bug es interesante', '¡Buen código!'],
+                reading: ['Leyendo…', 'Este archivo es largo', 'Hmm, tiene sentido'],
+                researching: ['Buscando…', 'Déjame buscar', 'En la web dicen…'],
+                thinking: ['Pensando…', 'Déjame pensar…', 'Hmm—'],
+                waitingUser: ['Esperándote~', '¿Qué opinas?', 'Aquí estoy'],
+                listening: ['Te escucho~', 'Mmm, ¿y luego?'],
+                error: ['¡Uy, algo salió mal!', 'No funcionó…', '¡Déjame intentarlo otra vez!'],
+                idle: ['Qué aburrido…', 'Buen clima hoy', '¿Cuándo vuelves?', 'Uf — un descanso'],
+            },
+            fr: {
+                working: ['Au travail…', 'Allez allez !', 'Laisse-moi voir'],
+                coding: ['Je code…', 'Ce bug est intéressant', 'Beau code !'],
+                reading: ['Lecture…', 'Ce fichier est long', 'Hmm, logique'],
+                researching: ['Je cherche…', 'Laisse-moi chercher', 'Sur le web, il paraît que…'],
+                thinking: ['Je réfléchis…', 'Laisse-moi réfléchir…', 'Hmm—'],
+                waitingUser: ['J’attends ta réponse~', 'Tu en penses quoi ?', 'Je suis là'],
+                listening: ['Je t’écoute~', 'Mmm, et ensuite ?'],
+                error: ['Oups, une erreur !', 'Ça n’a pas marché…', 'Je réessaie !'],
+                idle: ['Je m’ennuie…', 'Beau temps aujourd’hui', 'Tu reviens quand ?', 'Pfiou — une pause'],
+            },
+            de: {
+                working: ['Am Arbeiten…', 'Los los los!', 'Lass mich sehen'],
+                coding: ['Ich code…', 'Dieser Bug ist interessant', 'Schöner Code!'],
+                reading: ['Ich lese…', 'Diese Datei ist lang', 'Hmm, ergibt Sinn'],
+                researching: ['Ich suche…', 'Lass mich suchen', 'Im Netz heißt es…'],
+                thinking: ['Ich denke nach…', 'Lass mich überlegen…', 'Hmm—'],
+                waitingUser: ['Ich warte auf dich~', 'Was meinst du?', 'Ich bin hier'],
+                listening: ['Ich höre zu~', 'Mhm, und dann?'],
+                error: ['Ups, ein Fehler!', 'Das hat nicht geklappt…', 'Ich versuche es nochmal!'],
+                idle: [
+                    'Mir ist langweilig…',
+                    'Schönes Wetter heute',
+                    'Wann kommst du zurück?',
+                    'Puh — kurze Pause',
+                ],
+            },
+            ru: {
+                working: ['Работаю…', 'Давай-давай!', 'Дай посмотрю'],
+                coding: ['Пишу код…', 'Интересный баг', 'Хороший код!'],
+                reading: ['Читаю…', 'Этот файл длинный', 'Хм, логично'],
+                researching: ['Ищу…', 'Дай поищу', 'В интернете говорят…'],
+                thinking: ['Думаю…', 'Дай подумать…', 'Хм—'],
+                waitingUser: ['Жду тебя~', 'Что думаешь?', 'Я здесь'],
+                listening: ['Слушаю~', 'Мгм, а дальше?'],
+                error: ['Ой, ошибка!', 'Не получилось…', 'Попробую ещё раз!'],
+                idle: ['Скучно…', 'Хорошая погода', 'Когда вернёшься?', 'Фух — перерыв'],
+            },
+            pt: {
+                working: ['Trabalhando…', 'Vamos vamos!', 'Deixa eu ver'],
+                coding: ['Programando…', 'Esse bug é interessante', 'Bom código!'],
+                reading: ['Lendo…', 'Esse arquivo é longo', 'Hmm, faz sentido'],
+                researching: ['Pesquisando…', 'Deixa eu buscar', 'Na web dizem…'],
+                thinking: ['Pensando…', 'Deixa eu pensar…', 'Hmm—'],
+                waitingUser: ['Esperando você~', 'O que acha?', 'Estou aqui'],
+                listening: ['Estou ouvindo~', 'Mhm, e depois?'],
+                error: ['Ops, deu erro!', 'Não funcionou…', 'Vou tentar de novo!'],
+                idle: ['Que tédio…', 'Belo clima hoje', 'Quando você volta?', 'Ufa — uma pausa'],
             },
         };
 
@@ -7052,13 +6916,21 @@ window.__ModuleLoader__.load({
                         content,
                     ],
                 });
-            var numInput = (value, onChange, step) =>
+            var numInput = (value, onChange, step, min, max) =>
                 h('input', {
                     type: 'number',
                     step: step || '1',
+                    ...(typeof min === 'number' ? { min: min } : {}),
+                    ...(typeof max === 'number' ? { max: max } : {}),
                     className: 'wp-sf-input',
                     value: value,
-                    onChange: (e) => onChange(parseFloat(e.target.value) || 0),
+                    onChange: (e) => {
+                        var next = parseFloat(e.target.value) || 0;
+                        // 清空输入会得到 NaN→0：先钳到合法范围，避免桌宠瞬时消失/保存必然失败
+                        if (typeof min === 'number' && next < min) next = min;
+                        if (typeof max === 'number' && next > max) next = max;
+                        onChange(next);
+                    },
                 });
             var singleSelect = (value, options, onChange) =>
                 h('select', {
@@ -7251,7 +7123,13 @@ window.__ModuleLoader__.load({
                                 'size',
                                 t('labelSize'),
                                 t('hintSize'),
-                                numInput(draft.size, (v) => onPatch((d) => ({ ...d, size: v })), '10')
+                                numInput(
+                                    draft.size,
+                                    (v) => onPatch((d) => ({ ...d, size: v })),
+                                    '10',
+                                    220,
+                                    900
+                                )
                             ),
                             settingItem(
                                 'corner',
@@ -7873,22 +7751,6 @@ window.__ModuleLoader__.load({
             } catch (e) {
                 console.error('[whale-pet] resolveHostApi failed:', e);
             }
-            postDebug({
-                event: 'mount',
-                modern: modern,
-                remote: !!remoteSvc,
-                remoteSession: !!remoteSession,
-                sessions: !!(() => {
-                    try {
-                        return ctx.get('sessions');
-                    } catch (e) {
-                        return null;
-                    }
-                })(),
-                api: !!api,
-                subscribe: !!(api && api.subscribeActivity),
-                events: !!(api && api.events),
-            });
             // locale 服务（惰性桥接）：mount 时语言服务可能尚未就绪，注册与取值都要等
             // 它出现；桥会补注册词典并通知组件重新渲染（见 createLocaleBridge）。
             var locale = createLocaleBridge(ctx);
@@ -8020,16 +7882,7 @@ window.__ModuleLoader__.load({
                                                 sessionsSvc && sessionsSvc.list
                                                     ? sessionsSvc.list.getSnapshot()
                                                     : null;
-                                            postDebug({
-                                                event: 'after-open',
-                                                target: String(sessionId).slice(0, 24),
-                                                uiCurrent: snap ? snap.key || snap.sessionId || null : null,
-                                                listCurrent: (list && list.current) || null,
-                                                inList: !!(list && list.byId && list.byId[sessionId]),
-                                            });
-                                        } catch (e) {
-                                            postDebug({ event: 'after-open', error: String(e) });
-                                        }
+                                        } catch (e) {}
                                     }, 700);
                                     return 'ok';
                                 } catch (e) {
@@ -8187,10 +8040,9 @@ window.__ModuleLoader__.load({
             NOTIFY_KINDS,
             classifyTurnEnd,
             notifyDecision,
-            notifyQueueReducer,
             formatNotifyText,
             titleMark,
-            cardTtl,
+            systemTagFor,
             notificationEnvironment,
             createSystemNotifier,
             createNotifierSound,

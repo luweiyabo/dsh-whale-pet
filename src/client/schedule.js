@@ -13,13 +13,17 @@
  *   用 ECMAScript 内置的 `Intl.DateTimeFormat('en-u-ca-chinese')`（ICU 数据），
  *   不引入第三方历法表，也不手写闰月表。已验证：
  *   2024-09-17 → 八月十五（中秋）、2024-02-10 → 正月初一（春节）。
+ *   闰月由 ICU 标成 "2bis"（闰二月）：剥掉后缀取基月并置 leap 标记，
+ *   闰月日不会匹配常规月锚点，也不会中断日期扫描。
  *   ICU 缺失（极简构建）时 `lunarDateOf` 返回 null，农历节日自动失效、
  *   公历节日与季节判断不受影响。
  *
  * 【节日窗口怎么判】
  *   每个节日有一个「锚点日」（今年那一次）与前后窗口天数。
  *   - 公历节日：按年内日序计算，跨年用环形距离（12/25 的窗口能覆盖 1/1）。
- *   - 农历节日：在「今天 ±32 天」的范围内逐日换算农历，找出锚点日
+ *   - 农历节日：在「今天 ±32 天」的范围内逐日换算农历，找出锚点日。
+ *     探针统一投影到「上海正午」（UTC 04:00）这个固定瞬间再换算，
+ *     因此结果与本地时区、本地时钟时刻无关。
  *     （最多 65 次 Intl 调用，按「今天」缓存一天，成本可忽略）。
  */
 
@@ -171,8 +175,13 @@ function dayOfYearFor(year, month, day) {
 }
 
 /**
- * 农历换算：返回 { month, day } 或 null（运行环境无中文历法数据时）。
+ * 农历换算：返回 { month, day, leap }，运行环境无中文历法数据时返回 null。
+ * - month 是基月（1-12）；ICU 把闰月标成 "2bis"，剥掉后缀取基月并置 leap=true，
+ *   调用方据此避免「闰五月初五」被误判成五月初五。
+ * - 日期按 timeZone: 'Asia/Shanghai' 格式化，所以调用方应传入固定瞬间
+ *   （见 LUNAR_PROBE_UTC_HOUR），不要用本地午夜。
  * @param {Date} date
+ * @returns {{month: number, day: number, leap: boolean}|null}
  */
 export function lunarDateOf(date) {
     if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
@@ -188,10 +197,13 @@ export function lunarDateOf(date) {
     }
     try {
         const parts = fmt.formatToParts(date);
-        const month = Number((parts.find((p) => p.type === 'month') || {}).value);
+        const rawMonth = (parts.find((p) => p.type === 'month') || {}).value;
         const day = Number((parts.find((p) => p.type === 'day') || {}).value);
+        // 闰月形如 "2bis"：不能直接 Number()（NaN 会让整段扫描被当成「无历法数据」而 break）
+        const leap = typeof rawMonth === 'string' && /bis$/i.test(rawMonth);
+        const month = Number(leap ? rawMonth.replace(/bis$/i, '') : rawMonth);
         if (!Number.isFinite(month) || !Number.isFinite(day) || month <= 0 || day <= 0) return null;
-        return { month, day };
+        return { month, day, leap };
     } catch {
         return null;
     }
@@ -205,6 +217,8 @@ function dateKey(date) {
 }
 
 const LUNAR_SCAN_DAYS = 32;
+// 上海正午 = UTC 04:00：固定瞬间，任何本地时区/时刻都换算到同一个上海民用日期
+const LUNAR_PROBE_UTC_HOUR = 4;
 let festivalCacheKey = null;
 let festivalCacheValue = [];
 
@@ -221,6 +235,8 @@ export function festivalsOn(today = new Date()) {
     const key = dateKey(today);
     if (festivalCacheKey === key) return festivalCacheValue;
     const year = today.getFullYear();
+    const monthIndex = today.getMonth();
+    const dayOfMonth = today.getDate();
     const yearLength = isLeapYear(year) ? 366 : 365;
     const todayIndex = dayOfYear(today);
     const hits = [];
@@ -233,17 +249,18 @@ export function festivalsOn(today = new Date()) {
             continue;
         }
         if (!festival.lunar) continue;
-        // 农历锚点：在 ±32 天里找「农历月日相同」的那天
+        // 农历锚点：在 ±32 天里找「农历月日相同」的那天。
+        // 探针投影到「上海正午」的固定瞬间（UTC 04:00）：用本地午夜构造的话，
+        // UTC+9..+14 的用户在凌晨会被格式化成前一个农历日，整段窗口错位。
         for (let offset = -LUNAR_SCAN_DAYS; offset <= LUNAR_SCAN_DAYS; offset += 1) {
-            const probe = new Date(year, today.getMonth(), today.getDate() + offset);
+            const probe = new Date(Date.UTC(year, monthIndex, dayOfMonth + offset, LUNAR_PROBE_UTC_HOUR));
             const lunar = lunarDateOf(probe);
-            if (!lunar) break; // 环境无历法数据：整类跳过
+            if (!lunar) break; // 环境无历法数据：整类跳过（闰月不是 null，扫描必须继续）
+            // 闰月日（如闰五月初五）永不匹配常规月锚点
+            if (lunar.leap) continue;
             if (lunar.month !== festival.lunar.month || lunar.day !== festival.lunar.day) continue;
-            const probeIndex = dayOfYear(probe);
-            const diff = Math.abs(todayIndex - probeIndex);
-            // 用「跨年环形距离」兜底：扫描区间本身已足够短，两者取小更稳
-            const dist = Math.min(diff, Math.max(0, yearLength - diff));
-            if (dist <= festival.window) {
+            // offset 本身就是「距今天几天」，跨年也不需要再算环形距离
+            if (Math.abs(offset) <= festival.window) {
                 hits.push(festival.key);
                 break;
             }
@@ -360,10 +377,11 @@ export function usageTotal(usage) {
 
 /** 毫秒 → "3m20s" / "45s" / "1h02m"（通用符号，不做本地化） */
 export function formatDuration(ms) {
-    const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
-    if (total < 60) return Math.round(total) + 's';
-    const minutes = Math.floor(total / 60);
-    const seconds = Math.round(total % 60);
+    // 先取整到秒再拆分，进位才不会产生「1m60s」「59m60s」这样的非法分钟
+    const totalSec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+    if (totalSec < 60) return totalSec + 's';
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
     if (minutes < 60) return seconds ? minutes + 'm' + String(seconds).padStart(2, '0') + 's' : minutes + 'm';
     const hours = Math.floor(minutes / 60);
     return hours + 'h' + String(minutes % 60).padStart(2, '0') + 'm';
@@ -373,7 +391,8 @@ export function formatDuration(ms) {
 export function formatTokens(count) {
     const n = Math.max(0, Math.round(Number(count) || 0));
     if (n < 1000) return String(n);
-    if (n < 1000000) return (n / 1000).toFixed(n < 10000 ? 1 : 0) + 'k';
+    // 999.5k 起四舍五入已能进位到 1.0M；提前切档，避免 999999 显示成 "1000k"
+    if (n < 999500) return (n / 1000).toFixed(n < 10000 ? 1 : 0) + 'k';
     return (n / 1000000).toFixed(1) + 'M';
 }
 

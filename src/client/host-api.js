@@ -14,7 +14,7 @@ function settingsOf(getSettings) {
 
 // remote.settings 是远端连接建立后才就绪的子服务，快速重载/刷新时可能晚于 apply。
 // 因此收到的是惰性取值函数，真正读写时才轮询等它就绪。
-function waitForSettings(getSettings, timeoutMs) {
+function waitForSettings(getSettings, timeoutMs = 15000) {
     const s = settingsOf(getSettings);
     if (s) return Promise.resolve(s);
     return new Promise((resolve) => {
@@ -46,10 +46,11 @@ function unwrapRemoteResult(result) {
 // 0.2.0 typert Remote 子服务适配：direct 方法返回 { ok, value, error } 信封，
 // describe() → { ok:true, value:{ writable, hasDocument, namespaces } }。
 // 内部契约保持旧形状 { result:{ ok, value:{ namespaces } } }，供 createConfigStore 复用。
-function remoteSettingsAdapter(getSettings) {
+function remoteSettingsAdapter(getSettings, timeoutMs) {
+    var waitMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : 15000;
     return {
         describe: (_args = {}, _signal) =>
-            waitForSettings(getSettings, 15000).then((svc) => {
+            waitForSettings(getSettings, waitMs).then((svc) => {
                 if (!svc) return { result: { ok: false, value: null } };
                 return svc.describe().then((r) => ({
                     result: {
@@ -59,7 +60,7 @@ function remoteSettingsAdapter(getSettings) {
                 }));
             }),
         update: (args, _signal) =>
-            waitForSettings(getSettings, 15000).then((svc) => {
+            waitForSettings(getSettings, waitMs).then((svc) => {
                 if (!svc) throw new Error('Host settings not ready');
                 // host 侧签名 update(ns, patch, expectedRevision) 是严格元数校验，必须显式补足 3 个实参。
                 return svc.update(args.ns, args.patch, args.expectedRevision).then((r) => {
@@ -81,7 +82,7 @@ export function resolveHostApi(connection, services = {}) {
     let settings;
     if (modern === true && typeof getSettings === 'function') {
         // 0.2.0：连接已改协议，设置必须走 typert Remote 子服务 remote.settings。
-        settings = remoteSettingsAdapter(getSettings);
+        settings = remoteSettingsAdapter(getSettings, services.settingsTimeoutMs);
     } else if (typeof connection?.rpc?.call === 'function') {
         // 0.1.2：宿主 RPC 转发设置读写。
         call = async (endpoint, payload, signal) => {
@@ -96,7 +97,7 @@ export function resolveHostApi(connection, services = {}) {
             update: (args, signal) => call('settings/update', args, signal),
         };
     } else if (typeof getSettings === 'function') {
-        settings = remoteSettingsAdapter(getSettings);
+        settings = remoteSettingsAdapter(getSettings, services.settingsTimeoutMs);
     } else {
         return undefined;
     }

@@ -278,7 +278,8 @@
         "quotaAlertTitle": "プラン枠が不足",
         "quotaAlertLine": "{window}枠の残り {remaining}%",
         "quotaWindowWeek": "週間",
-        "quotaWindowMonth": "月間"
+        "quotaWindowMonth": "月間",
+        "notifyStepOne": "{n} ステップ"
     },
     "animNames": {
         "breathing": "待機中の呼吸",

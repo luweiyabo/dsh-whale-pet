@@ -643,6 +643,7 @@ export function createActivitySystem({ normalizeAnimId }) {
         var NOTIFY_RELEVANT_EVENTS = {
             'turn/start': true,
             'turn/end': true,
+            'step/start': true,
             'assistant/message': true,
             'tool/call': true,
             'approval/asked': true,
