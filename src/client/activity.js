@@ -678,11 +678,12 @@ export function createActivitySystem({ normalizeAnimId }) {
             if (opts.onNotify && !subagent) opts.onNotify(frame);
             if (!subagent && frame.type === 'session/event' && !frame.snapshot) {
                 var ev0 = frame.event || {};
-                if (opts.onUsage && ev0.type === 'assistant/message' && ev0.data && ev0.data.usage)
-                    opts.onUsage(ev0.data.usage, frame.sessionId);
-                // 回合边界与工具调用：供用量/耗时统计（完成提示、本章统计气泡）
-                if (opts.onToolCall && ev0.type === 'tool/call')
-                    opts.onToolCall((ev0.data && ev0.data.name) || '', frame.sessionId);
+                var data0 = ev0.data || {};
+                var stepMeta = { turn: data0.turn, step: data0.step };
+                if (opts.onUsage && ev0.type === 'assistant/message' && data0.usage)
+                    opts.onUsage(data0.usage, frame.sessionId, stepMeta);
+                // 模型步数：一次 step/start = 一步（与 Harness 的「轮/步」统计同口径）
+                if (opts.onStep && ev0.type === 'step/start') opts.onStep(frame.sessionId, stepMeta);
                 if (opts.onTurn) {
                     if (ev0.type === 'turn/start')
                         opts.onTurn({

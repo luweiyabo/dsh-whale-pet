@@ -8,6 +8,7 @@ import {
     festivalsOn,
     formatDuration,
     formatTokens,
+    sanitizeTurnStats,
     seasonOfMonth,
     situationalPool,
     summarizeTurn,
@@ -1731,15 +1732,68 @@ window.__ModuleLoader__.load({
                 balanceAlertRef.current = readAlertStore(balanceStorageRef.current);
             }
             // ---- 每会话回合统计 ----
-            // { startedAt, endedAt, tools, usage, last }，按 sessionId 分开记。
+            // { turn, startedAt, endedAt, steps, usage, last }，按 sessionId 分开记。
             // 多会话（scope=any / 完成提示）并行回合必须各记各的，否则数字互相污染。
+            // 未结束回合会写入 localStorage：插件热更新/页面刷新会重建内存统计，
+            // 恢复后接着累计（否则完成提示只统计到重载之后的事件，用量会明显偏小）。
+            var TURN_STATS_KEY = 'dsh-whale-pet.turnStats.v1';
+            var turnStatsStorage = () => {
+                try {
+                    return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
+                } catch (e) {
+                    return null;
+                }
+            };
+            var turnStatsKeyOf = (sessionId) => TURN_STATS_KEY + ':' + String(sessionId || '');
+            var saveTurnStats = (sessionId, st) => {
+                var storage = turnStatsStorage();
+                if (!storage || !sessionId || !st) return;
+                try {
+                    storage.setItem(
+                        turnStatsKeyOf(sessionId),
+                        JSON.stringify({
+                            v: 1,
+                            turn: st.turn || 0,
+                            startedAt: st.startedAt || 0,
+                            endedAt: st.endedAt || 0,
+                            steps: st.steps || 0,
+                            usage: st.usage || emptyUsage(),
+                        })
+                    );
+                } catch (e) {
+                    /* 隐私模式/配额满：统计仅保留在内存，不影响其他功能 */
+                }
+            };
+            var restoreTurnStats = (sessionId) => {
+                var storage = turnStatsStorage();
+                if (!storage || !sessionId) return null;
+                try {
+                    var restored = sanitizeTurnStats(
+                        JSON.parse(storage.getItem(turnStatsKeyOf(sessionId)) || 'null')
+                    );
+                    return restored ? { ...restored, endedAt: 0, last: null } : null;
+                } catch (e) {
+                    return null;
+                }
+            };
+            var resetTurnStats = (st, turn, at) => {
+                st.turn = Math.max(0, Math.round(Number(turn) || 0));
+                st.startedAt = Number(at) || Date.now();
+                st.endedAt = 0;
+                st.steps = 0;
+                st.usage = emptyUsage();
+                st.last = null;
+            };
             var turnStatsBySession = useRef(new Map());
             var statsOf = (sessionId) => {
                 var map = turnStatsBySession.current;
                 var key = sessionId || '';
                 var st = map.get(key);
                 if (!st) {
-                    st = { startedAt: 0, endedAt: 0, tools: 0, usage: emptyUsage(), last: null };
+                    st = restoreTurnStats(key);
+                    if (!st) {
+                        st = { turn: 0, startedAt: 0, endedAt: 0, steps: 0, usage: emptyUsage(), last: null };
+                    }
                     map.set(key, st);
                     if (map.size > 20) map.delete(map.keys().next().value); // LRU 粗淘汰
                 }
@@ -2778,9 +2832,12 @@ window.__ModuleLoader__.load({
                     },
                     // 用量：累积进该会话的回合统计（供"本轮统计"与完成提示），
                     // 同时节流刷新官方余额（余额只跟当前会话）。
-                    onUsage: (usage, sessionId) => {
+                    onUsage: (usage, sessionId, meta) => {
                         var st = statsOf(sessionId);
+                        var usageTurn = meta && Number(meta.turn) > 0 ? Math.round(Number(meta.turn)) : 0;
+                        if (usageTurn && st.turn !== usageTurn) resetTurnStats(st, usageTurn, 0);
                         st.usage = addUsage(st.usage, usage);
+                        saveTurnStats(sessionId, st);
                         var cUsage = cfgRef.current;
                         if (
                             cUsage &&
@@ -2794,13 +2851,12 @@ window.__ModuleLoader__.load({
                     onTurn: (info) => {
                         var st = statsOf(info.sessionId);
                         if (info.phase === 'start') {
-                            st.startedAt = info.at;
-                            st.endedAt = 0;
-                            st.tools = 0;
-                            st.usage = emptyUsage();
+                            resetTurnStats(st, info.turn, info.at);
+                            saveTurnStats(info.sessionId, st);
                             return;
                         }
                         st.endedAt = info.at;
+                        if (Number(info.turn) > 0) st.turn = Math.round(Number(info.turn));
                         postDebug({
                             event: 'turn-end',
                             seq: info.seq,
@@ -2809,6 +2865,7 @@ window.__ModuleLoader__.load({
                         });
                         var summary = summarizeTurn(st);
                         st.last = summary;
+                        saveTurnStats(info.sessionId, st);
                         var cls = classifyTurnEnd(info.reason);
                         if (cls) {
                             enqueueNotify({
@@ -2821,9 +2878,13 @@ window.__ModuleLoader__.load({
                             });
                         }
                     },
-                    // 工具调用计数（回合统计的"步数"）
-                    onToolCall: (name, sessionId) => {
-                        statsOf(sessionId).tools += 1;
+                    // 模型步数（回合统计的"步数"；一次 step/start = 一步）
+                    onStep: (sessionId, meta) => {
+                        var st = statsOf(sessionId);
+                        var stepTurn = meta && Number(meta.turn) > 0 ? Math.round(Number(meta.turn)) : 0;
+                        if (stepTurn && st.turn !== stepTurn) resetTurnStats(st, stepTurn, 0);
+                        st.steps = (st.steps || 0) + 1;
+                        saveTurnStats(sessionId, st);
                     },
                     // 审批/问答：等待确认提示；已处理则撤掉对应卡片
                     onNotify: (frame) => {
@@ -3754,7 +3815,7 @@ window.__ModuleLoader__.load({
                 if (dragRef.current.active || dragRef.current.dragging) return; // 拖拽中不弹
                 e.preventDefault(); // 屏蔽浏览器默认菜单
                 e.stopPropagation();
-                // 钳制在视口内（菜单约 200×200：回家/统计/刷新余额/设置/隐藏）
+                // 钳制在视口内（菜单约 200×200：回家/刷新余额/设置/隐藏）
                 var x = Math.min(e.clientX, window.innerWidth - 210);
                 var y = Math.min(e.clientY, window.innerHeight - 210);
                 setMenu({ x: Math.max(x, 4), y: Math.max(y, 4) });
@@ -3801,21 +3862,6 @@ window.__ModuleLoader__.load({
                 } else {
                     fallback();
                 }
-            };
-            // 本轮统计：把累计的 tokens / 工具步数 / 耗时说一句（数据已在 ref 里）
-            var menuShowStats = () => {
-                setMenu(null);
-                var st = statsOf(currentSessionRef.current);
-                var last = st.last || summarizeTurn(st);
-                if (!last.durationMs && !last.tools && !last.tokens) {
-                    showBubble(tPet('statNone'));
-                    return;
-                }
-                var parts = [];
-                if (last.durationMs) parts.push(formatDuration(last.durationMs));
-                if (last.tools) parts.push(last.tools + ' ' + tPet('statSteps'));
-                if (last.tokens) parts.push(formatTokens(last.tokens) + ' tokens');
-                showBubble(tPet('statTurn') + ' ' + parts.join(' · '));
             };
             // 临时：右键「测试通知」——单独验证系统通知与提示音，不依赖回合时序
             var menuTestNotify = () => {
@@ -4308,16 +4354,6 @@ window.__ModuleLoader__.load({
                                         onClick: menuGoHome,
                                     },
                                     tPet('menuHome')
-                                ),
-                                h(
-                                    'button',
-                                    {
-                                        type: 'button',
-                                        role: 'menuitem',
-                                        className: 'wp-menuItem',
-                                        onClick: menuShowStats,
-                                    },
-                                    tPet('menuStats')
                                 ),
                                 h(
                                     'button',

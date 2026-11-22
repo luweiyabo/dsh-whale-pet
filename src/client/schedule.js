@@ -379,16 +379,38 @@ export function formatTokens(count) {
 
 /**
  * 回合统计摘要（供气泡展示；文本组装交给调用方做 i18n）。
- * @param {{startedAt?: number, endedAt?: number, tools?: number, usage?: object}} stats
+ * steps：本回合的模型请求步数（一次 step/start 一步），与 Harness 的「轮/步」统计同口径。
+ * @param {{startedAt?: number, endedAt?: number, steps?: number, usage?: object}} stats
  */
 export function summarizeTurn(stats) {
     const s = stats || {};
     const durationMs =
         s.endedAt && s.startedAt ? Math.max(0, s.endedAt - s.startedAt) : Math.max(0, s.durationMs || 0);
+    const steps = s.steps !== undefined ? s.steps : s.tools;
     return {
         durationMs,
-        tools: Math.max(0, Math.round(Number(s.tools) || 0)),
+        steps: Math.max(0, Math.round(Number(steps) || 0)),
         tokens: usageTotal(s.usage),
         calls: s.usage && s.usage.calls ? s.usage.calls : 0,
+    };
+}
+
+/**
+ * 校验从 localStorage 恢复的「未结束回合」统计。
+ * 插件热更新/页面刷新会重建内存，恢复后接着累计，完成提示的用量才与 Harness 一致。
+ * 只接受 version 1、回合号为正整数且尚未结束的记录；其余一律返回 null（按新回合计）。
+ * @param {unknown} value
+ * @returns {{turn: number, startedAt: number, steps: number, usage: object}|null}
+ */
+export function sanitizeTurnStats(value) {
+    if (!value || typeof value !== 'object' || value.v !== 1) return null;
+    const turn = Number(value.turn);
+    if (!Number.isSafeInteger(turn) || turn <= 0) return null;
+    if (Number(value.endedAt) > 0) return null;
+    return {
+        turn,
+        startedAt: Math.max(0, Number(value.startedAt) || 0),
+        steps: Math.max(0, Math.round(Number(value.steps) || 0)),
+        usage: value.usage && typeof value.usage === 'object' ? value.usage : emptyUsage(),
     };
 }

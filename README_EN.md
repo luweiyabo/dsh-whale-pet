@@ -151,7 +151,7 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 | Double-click the pet | Plays the “Blue Whale Appears” special animation and clears selection |
 | Drag and bounce | Moves and places the pet; squash-and-stretch follows drag speed, and a quick throw starts the “Turn Into a Ball” animation at its ball-shaped frame and continues with momentum; the character bounds bounce off screen edges, collisions add a Q-style squash when interactive effects are enabled; momentum is disabled when Reduce Motion is enabled |
 | Drag fully off-screen | Enters edge-hidden mode; move the pointer to that screen edge to reveal the recall handle |
-| Right-click | Opens shortcuts for Home, This turn, Settings, and Hide |
+| Right-click | Opens shortcuts for Home, Refresh balance, Settings, and Hide |
 
 ### Settings
 

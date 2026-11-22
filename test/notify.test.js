@@ -215,7 +215,7 @@ test('余额全局提醒：聚焦只出气泡，失焦走系统/提示音', () =
 
 test('通知文案：完成带指标，失败带消息，等待有固定说明', () => {
     const done = formatNotifyText(
-        { kind: 'done', summary: { durationMs: 200000, tools: 12, tokens: 8400 } },
+        { kind: 'done', summary: { durationMs: 200000, steps: 12, tokens: 8400 } },
         t
     );
     assert.equal(done.title, '完成');

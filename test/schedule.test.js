@@ -9,6 +9,7 @@ import {
     lunarDateOf,
     seasonOfMonth,
     situationalPool,
+    sanitizeTurnStats,
     summarizeTurn,
     usageTotal,
 } from '../src/client/schedule.js';
@@ -139,11 +140,35 @@ test('summarizeTurn 由起止时间与 usage 得到摘要', () => {
     const summary = summarizeTurn({
         startedAt: 1000,
         endedAt: 61000,
-        tools: 12,
+        steps: 12,
         usage: { input: 8000, output: 432, total: 8432, calls: 3 },
     });
     assert.equal(summary.durationMs, 60000);
-    assert.equal(summary.tools, 12);
+    assert.equal(summary.steps, 12);
     assert.equal(summary.tokens, 8432);
     assert.equal(summary.calls, 3);
+    // 旧口径字段（tools）仍可被读取，避免升级瞬间统计归零
+    assert.equal(summarizeTurn({ steps: undefined, tools: 4 }).steps, 4);
+});
+
+test('未结束回合的持久化统计可恢复，已结束/坏数据返回 null', () => {
+    const restored = sanitizeTurnStats({
+        v: 1,
+        turn: 9,
+        startedAt: 1000,
+        endedAt: 0,
+        steps: 26,
+        usage: { input: 25155, output: 21561, cacheRead: 16146560, total: 16193276, calls: 26 },
+    });
+    assert.equal(restored.turn, 9);
+    assert.equal(restored.steps, 26);
+    assert.equal(restored.usage.total, 16193276);
+
+    // 已结束的回合不再恢复（避免重放通知/重复累计）
+    assert.equal(sanitizeTurnStats({ v: 1, turn: 9, endedAt: 5000 }), null);
+    // 版本/回合号/类型不合法
+    assert.equal(sanitizeTurnStats({ v: 2, turn: 9 }), null);
+    assert.equal(sanitizeTurnStats({ v: 1, turn: 0 }), null);
+    assert.equal(sanitizeTurnStats(null), null);
+    assert.equal(sanitizeTurnStats('x'), null);
 });

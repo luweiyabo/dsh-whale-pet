@@ -159,7 +159,7 @@ export function formatNotifyText(entry, t) {
     var parts = [];
     var s = e.summary || {};
     if (s.durationMs) parts.push(formatDuration(s.durationMs));
-    if (s.tools) parts.push(tr('notifySteps').replace('{n}', s.tools));
+    if (s.steps) parts.push(tr('notifySteps').replace('{n}', s.steps));
     if (s.tokens) parts.push(formatTokens(s.tokens) + ' tokens');
     if (e.limit) parts.push(tr('notifyLimit'));
     return { title: title, body: parts.join(' · ') };
