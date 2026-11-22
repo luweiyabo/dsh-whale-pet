@@ -18,12 +18,17 @@ export const BALANCE_REFRESH_OPTIONS = Object.freeze([30000, 60000, 300000, 0]);
 export const BALANCE_CURRENCIES = Object.freeze(['CNY', 'USD']);
 
 export const DEFAULT_BALANCE = Object.freeze({
-    alert: false,
-    thresholds: Object.freeze({ CNY: 20, USD: 3 }),
+    alert: true,
+    thresholds: Object.freeze({ CNY: 5, USD: 1 }),
     refreshMs: 60000,
-    allowApiKey: false,
+    turnRefresh: true,
+    allowApiKey: true,
     timeoutMs: 12000,
+    quotaAlert: Object.freeze({ weeklyPct: 5, monthlyPct: 5 }),
 });
+
+// 套餐周/月额度默认剩余阈值；配置里可分别手改 quotaAlert.weeklyPct / monthlyPct。
+export const QUOTA_ALERT_REMAINING_PCT = 5;
 
 /**
  * 把服务商/账户返回的十进制字符串规范成普通十进制。
@@ -129,7 +134,7 @@ export function sourceKey(source, provider) {
 }
 
 /**
- * 金额展示格式：固定两位小数（四舍五入），如 18.25840318 → 18.26、20 → 20.00。
+ * 金额展示格式：固定两位小数（直接截断，不四舍五入），如 18.25840318 → 18.25、20 → 20.00。
  * 只用于展示；比较/求和仍走 normalizeDecimal + decimalCompare/addDecimal 的全精度字符串。
  * @param {unknown} value
  * @returns {string} 非法金额返回空串
@@ -142,8 +147,7 @@ export function formatMoney(value) {
     const dot = abs.indexOf('.');
     const int = dot === -1 ? abs : abs.slice(0, dot);
     const frac = dot === -1 ? '' : abs.slice(dot + 1);
-    let minor = BigInt(int + frac.slice(0, 2).padEnd(2, '0'));
-    if (frac.length > 2 && frac.charAt(2) >= '5') minor += BigInt(1);
+    const minor = BigInt(int + frac.slice(0, 2).padEnd(2, '0'));
     const whole = (minor / BigInt(100)).toString();
     const cents = (minor % BigInt(100)).toString().padStart(2, '0');
     const sign = negative && (whole !== '0' || cents !== '00') ? '-' : '';
@@ -288,6 +292,75 @@ export function mergeWalletBalances(normal, bonus) {
                 bonus: row.bonus,
             };
         });
+}
+
+/**
+ * 套餐周/月额度不足判定：每个窗口只在首次跌破阈值时提醒，恢复后重新武装。
+ * 5h 窗口不参与（用户只要求周/月）；金额与百分比都只用于展示，不参与钱包比较。
+ * @param {{state?: object, windows?: Array, thresholdPct?: number, now?: number}} input
+ * @returns {{alerts: Array, state: object, changed: boolean}}
+ */
+export function evaluateQuotaAlerts(input) {
+    const i = input || {};
+    const state = i.state && typeof i.state === 'object' ? i.state : {};
+    const next = { ...state };
+    const alerts = [];
+    let changed = false;
+    const rawThreshold = Number(i.thresholdPct);
+    const fallback = Number.isFinite(rawThreshold)
+        ? Math.max(0, Math.min(100, rawThreshold))
+        : QUOTA_ALERT_REMAINING_PCT;
+    const configured = i.thresholds && typeof i.thresholds === 'object' ? i.thresholds : {};
+    const thresholdFor = (key) => {
+        const n = Number(configured[key]);
+        return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : fallback;
+    };
+    for (const window of i.windows || []) {
+        if (!window || typeof window !== 'object') continue;
+        const rawKey = String(window.key || '').toLowerCase();
+        const key =
+            rawKey === 'monthly' || window.label === '月'
+                ? 'monthly'
+                : rawKey === 'weekly' || window.label === '周'
+                  ? 'weekly'
+                  : null;
+        if (!key) continue;
+        const threshold = thresholdFor(key);
+        if (window.usedPct === null || window.usedPct === undefined || window.usedPct === '') continue;
+        const used = Number(window.usedPct);
+        if (!Number.isFinite(used)) continue;
+        const remaining = Math.max(0, 100 - Math.max(0, Math.min(100, used)));
+        const low = remaining <= threshold + 1e-9;
+        const was = !!(next[key] && next[key].below);
+        if (low && !was) alerts.push({ key, remainingPct: remaining });
+        if (low !== was) {
+            next[key] = { below: low, at: Number.isFinite(i.now) ? i.now : Date.now() };
+            changed = true;
+        }
+    }
+    return { alerts, state: next, changed };
+}
+
+/** 额度不足提醒文案；窗口名走词条，避免在非中文界面里出现「周/月」。 */
+export function formatQuotaAlert(alerts, providerLabel, t) {
+    const tr =
+        typeof t === 'function'
+            ? t
+            : function (key) {
+                  return key;
+              };
+    const list = (alerts || []).slice(0, 2).map((alert) => {
+        const windowLabel = tr(alert.key === 'monthly' ? 'quotaWindowMonth' : 'quotaWindowWeek');
+        const remaining = Math.max(0, Math.floor(Number(alert.remainingPct) * 10) / 10);
+        return tr('quotaAlertLine')
+            .replace('{window}', windowLabel)
+            .replace('{remaining}', String(remaining));
+    });
+    if ((alerts || []).length > 2) list.push('…');
+    return {
+        title: tr('quotaAlertTitle'),
+        body: (providerLabel ? providerLabel + ' · ' : '') + list.join(' · '),
+    };
 }
 
 /**

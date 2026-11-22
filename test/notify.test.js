@@ -177,7 +177,28 @@ test('非安全上下文（局域网 http）不会尝试系统通知', () => {
     assert.equal(d.channel, 'sound');
 });
 
-test('事件开关关闭与未知 kind 一律静默', () => {
+test('总开关关闭：完成/失败/待确认全部静默', () => {
+    const off = { enabled: false };
+    const base = {
+        notify: off,
+        visible: true,
+        focused: true,
+        secure: true,
+        supported: true,
+        permission: 'granted',
+    };
+    for (const kind of ['done', 'error', 'waiting']) {
+        assert.deepEqual(
+            notifyDecision({ ...base, kind }),
+            { channel: 'none', title: false, card: false },
+            kind
+        );
+        // 页面不可见也一样：关掉就是完全不打扰
+        assert.equal(notifyDecision({ ...base, kind, visible: false, focused: false }).channel, 'none', kind);
+    }
+});
+
+test('旧配置的单事件开关仍被尊重（升级后不突然变吵），未知 kind 静默', () => {
     const off = { ...DEFAULT_NOTIFY, done: false };
     assert.equal(
         notifyDecision({ kind: 'done', notify: off, visible: true, focused: true, secure: true }).channel,
@@ -186,6 +207,49 @@ test('事件开关关闭与未知 kind 一律静默', () => {
     assert.equal(notifyDecision({ kind: 'nope', notify: DEFAULT_NOTIFY }).channel, 'none');
 });
 
+test('低余额提醒（preferSystem）：系统通知可用时，聚焦也直接发系统通知', () => {
+    const base = {
+        notify: DEFAULT_NOTIFY,
+        sessionScoped: false,
+        preferSystem: true,
+        secure: true,
+        supported: true,
+        permission: 'granted',
+    };
+    // 聚焦：回合提示只会出气泡，低余额必须走系统通知（只出气泡不够明显）
+    assert.deepEqual(channelDecision({ ...base, visible: true, focused: true }), {
+        channel: 'system',
+        title: false,
+        card: false,
+    });
+    assert.deepEqual(channelDecision({ ...base, visible: false, focused: false }), {
+        channel: 'system',
+        title: false,
+        card: false,
+    });
+    // 系统通知不可用：聚焦回到气泡，失焦回到提示音 + 标题
+    const noPerm = { ...base, permission: 'denied' };
+    assert.equal(channelDecision({ ...noPerm, visible: true, focused: true }).channel, 'bubble');
+    assert.deepEqual(channelDecision({ ...noPerm, visible: false, focused: false }), {
+        channel: 'sound',
+        title: true,
+        card: false,
+    });
+    // 关掉提示音：失焦退化为回前台补卡
+    assert.deepEqual(
+        channelDecision({
+            ...noPerm,
+            notify: { enabled: true, sound: false },
+            visible: false,
+            focused: false,
+        }),
+        {
+            channel: 'none',
+            title: true,
+            card: true,
+        }
+    );
+});
 test('余额全局提醒：聚焦只出气泡，失焦走系统/提示音', () => {
     const base = {
         notify: DEFAULT_NOTIFY,

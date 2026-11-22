@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     BALANCE_ALERT_STORAGE_KEY,
+    QUOTA_ALERT_REMAINING_PCT,
     addDecimal,
     decimalCompare,
     emptyAlertStore,
     evaluateBalanceAlerts,
+    evaluateQuotaAlerts,
     formatBalanceAlert,
     formatMoney,
+    formatQuotaAlert,
     mergeWalletBalances,
     normalizeDecimal,
     readAlertStore,
@@ -170,14 +173,14 @@ test('提醒状态持久化：损坏 JSON / 版本不符 / 抛错都安全', () 
     assert.equal(writeAlertStore(null, store), false);
 });
 
-test('金额展示固定两位小数并四舍五入', () => {
-    assert.equal(formatMoney('18.2584031800000000'), '18.26');
+test('金额展示固定两位小数并直接截断', () => {
+    assert.equal(formatMoney('18.2584031800000000'), '18.25');
     assert.equal(formatMoney('17.74139186'), '17.74');
     assert.equal(formatMoney('20'), '20.00');
     assert.equal(formatMoney('12.5'), '12.50');
-    assert.equal(formatMoney('0.005'), '0.01');
+    assert.equal(formatMoney('0.005'), '0.00');
     assert.equal(formatMoney('0.004'), '0.00');
-    assert.equal(formatMoney('-0.005'), '-0.01');
+    assert.equal(formatMoney('-0.005'), '0.00');
     assert.equal(formatMoney('0E-16'), '0.00');
     assert.equal(formatMoney('1.2e+3'), '1200.00');
     assert.equal(formatMoney('bad'), '');
@@ -198,4 +201,98 @@ test('提醒文案多币种合并、最多两个', () => {
     );
     assert.equal(text.title, '余额偏低');
     assert.equal(text.body, 'DeepSeek 账户 · CNY 12.34（阈值 20.00） · USD 1.20（阈值 3.00）');
+});
+
+test('套餐额度提醒：只认周/月，剩余 ≤5% 提醒一次，恢复后复位', () => {
+    assert.equal(QUOTA_ALERT_REMAINING_PCT, 5);
+    const windows = [
+        { key: 'rolling', label: '5h', usedPct: 99 },
+        { key: 'weekly', label: '周', usedPct: 95 },
+        { key: 'monthly', label: '月', usedPct: 95.5 },
+    ];
+    const first = evaluateQuotaAlerts({ state: {}, windows, thresholdPct: 5, now: 1000 });
+    assert.deepEqual(
+        first.alerts.map((a) => a.key),
+        ['weekly', 'monthly']
+    );
+    assert.equal(first.alerts[0].remainingPct, 5);
+    assert.equal(first.changed, true);
+    assert.equal(first.state.weekly.below, true);
+
+    const repeat = evaluateQuotaAlerts({
+        state: first.state,
+        windows,
+        thresholdPct: 5,
+        now: 2000,
+    });
+    assert.equal(repeat.alerts.length, 0, '持续不足不重复提醒');
+    assert.equal(repeat.changed, false);
+
+    const recovered = evaluateQuotaAlerts({
+        state: repeat.state,
+        windows: [
+            { key: 'weekly', label: '周', usedPct: 20 },
+            { key: 'monthly', label: '月', usedPct: 30 },
+        ],
+        thresholdPct: 5,
+        now: 3000,
+    });
+    assert.equal(recovered.alerts.length, 0);
+    assert.equal(recovered.changed, true);
+    assert.equal(recovered.state.weekly.below, false);
+
+    const again = evaluateQuotaAlerts({
+        state: recovered.state,
+        windows: [{ key: 'weekly', label: '周', usedPct: 96 }],
+        thresholdPct: 5,
+        now: 4000,
+    });
+    assert.equal(again.alerts.length, 1);
+    assert.equal(again.alerts[0].key, 'weekly');
+
+    // 缺少 usedPct 的窗口不能被当成 0% 使用而误复位。
+    const unknown = evaluateQuotaAlerts({
+        state: again.state,
+        windows: [{ key: 'weekly', label: '周', usedPct: null }],
+        thresholdPct: 5,
+        now: 5000,
+    });
+    assert.equal(unknown.changed, false);
+    assert.equal(unknown.state.weekly.below, true);
+});
+
+test('套餐额度提醒支持周/月独立阈值', () => {
+    const result = evaluateQuotaAlerts({
+        state: {},
+        windows: [
+            { key: 'weekly', label: '周', usedPct: 96 },
+            { key: 'monthly', label: '月', usedPct: 92 },
+        ],
+        thresholds: { weekly: 5, monthly: 8 },
+        now: 1000,
+    });
+    assert.deepEqual(
+        result.alerts.map((a) => a.key),
+        ['weekly', 'monthly']
+    );
+});
+
+test('套餐额度提醒文案：窗口名走词条，剩余百分比向下取整', () => {
+    const t = (key) =>
+        ({
+            quotaAlertTitle: '套餐额度不足',
+            quotaAlertLine: '{window}额度剩余 {remaining}%',
+            quotaWindowWeek: '周',
+            quotaWindowMonth: '月',
+        })[key] || key;
+    const text = formatQuotaAlert(
+        [
+            { key: 'weekly', remainingPct: 4.96 },
+            { key: 'monthly', remainingPct: 5 },
+        ],
+        'Codex',
+        t
+    );
+    assert.equal(text.title, '套餐额度不足');
+    assert.equal(text.body, 'Codex · 周额度剩余 4.9% · 月额度剩余 5%');
 });

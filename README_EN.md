@@ -61,7 +61,7 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.3`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances are layered by account / plan / API-key wallet: DeepSeek account needs no API key, plans do not query a wallet, and API-key wallets require explicit consent; failures keep the last known balance labelled with its time.
+Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.3`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances are layered by account / plan / API-key wallet: DeepSeek account needs no API key, plans do not query a wallet, and API-key wallets are queried by default; failures keep the last known balance labelled with its time.
 
 **Platform note**: transparent WebM relies on VP9 alpha, which works in Chromium-based browsers and Firefox. Safari and every browser on iOS (all WebKit) render transparent video on a black box, so the pet switches to static frames automatically: actions still change, but there is no frame-by-frame motion.
 
@@ -157,7 +157,7 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 
 Open **Settings → Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
 
-- Visibility, text bubbles, account balance, low-balance alerts, and API-key consent
+- Visibility, text bubbles, balance, low-balance and plan-quota alerts (the balance alert switch lives in Display & Behavior; thresholds can be edited in the config file)
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
 - Pet size, default corner, and session-awareness scope
 - Quiet, balanced, or lively autonomous activity
@@ -212,19 +212,23 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 
 ### Account balance and low-balance alerts
 
-Enable `meter` to show the balance and `balance.alert` to be notified below a threshold. Sources are chosen in this order, keeping API keys out of the way unless necessary:
+Enable `meter` to show the balance and `balance.alert` to be notified when the wallet or plan quota runs low. Sources are chosen in this order; API-key wallets are queried by default:
 
 - **DeepSeek account** (signed in): uses the DSH account service `remote.account.getBalance`; no API key. The amount is recharge + bonus.
 - **Plans / subscriptions** (Kimi Coding, GLM Coding, Qwen / Xiaomi Token Plan, ChatGPT Codex, GitHub Copilot, etc.): reports "plan/subscription billing — no wallet balance" and never queries a wallet or a key.
-- **API-key wallets** (DeepSeek / Moonshot / StepFun): queried only after you explicitly enable "Allow API-key queries" in Settings. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed.
+- **Plan quota**: Codex reads local logs (5h/week; offline, no token); OpenCode Go queries its official endpoint (5h/week/month); GLM Coding CN and z.ai intl query their official endpoints (5h/week). When available, the bubble shows "5h 62% · week 31%" and the detail card shows bars plus reset countdowns. No fake numbers when an endpoint is unavailable. Quota reads use the API key by default; a weekly/monthly window alerts once when 5% or less remains.
+- **API-key wallets** (DeepSeek / Moonshot / StepFun): queried by default. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed.
 
 Low-balance alerts:
 
-- Per-currency thresholds (CNY 20 / USD 3 by default); one alert per crossing, reset after topping up.
-- Reuses the turn-notification channels: system notification / chime / card, with a bubble while the page is focused.
-- Refresh interval `30s / 60s / 5min / off`; right-click "Refresh balance" queries immediately (3 s Host debounce).
+- Default thresholds CNY 5 / USD 1; one alert per crossing, reset after topping up.
+- Weekly/monthly plan quota alerts by default when 5% or less remains; resets after recovery. The 5h window is not alerted.
+- Channel: **system notification first** — crossing the threshold sends a system notification even while the page is focused (a bubble alone is easy to miss), and the in-page bubble is kept too; when system notifications are unavailable, an unfocused page gets the chime plus a title dot and a focused page gets the bubble.
+- Default 60 s refresh interval; right-click "Refresh balance" queries immediately (3 s Host debounce); the current session refreshes once when a turn ends.
+- Opening a session detects its model automatically and fetches the balance without waiting for a model request; the bubble shows "Detecting the session model…" while resolving.
+- Hover the balance bubble to expand the detail and move away to collapse it: source, currencies, and last update; changed amounts roll with reduced-motion support. Refresh and settings remain in the right-click menu.
 - Proxy: DSH reads `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at launch; the plugin uses plain `fetch` and never installs its own proxy. OS proxy settings are not read; SOCKS is unsupported; a TLS-intercepting proxy needs `NODE_EXTRA_CA_CERTS` before launch.
-- Disabled by default; token costs are not estimated. If an older profile already enabled `meter`, allow API-key queries once after upgrading (0.2.0 is unpublished, so there is no automatic migration).
+- Token costs are not estimated. Low-balance alerts are on by default; Settings exposes only that switch, while the other balance parameters are editable in the profile `cordis.patch.yml` under `whale-pet.config.balance`: `thresholds.CNY/USD`, `refreshMs`, `allowApiKey`, `turnRefresh`, `quotaAlert.weeklyPct/monthlyPct` (restart to apply).
 
 ### Turn notifications
 
@@ -233,7 +237,7 @@ Get notified when a turn finishes, fails, or waits for your approval/answer. Whe
 - Page focused: a bubble above the pet with a reaction animation; other sessions include their name, and clicking the bubble switches back
 - Page unfocused/minimized: system notification on Windows, macOS, and Linux (grant browser permission once on the Web; none needed in Desktop)
 - No system notification available: a short chime plus a `●` title marker, and the card is shown when you return
-- Settings page “Turn notifications”: five switches for completion, failure, needs-input, system notifications, and the chime
+- One “Turn notifications” checkbox under Display & behavior: it covers completion, failure, and needs-input; system notifications versus the chime is decided by the environment
 - Subagent sessions never notify: a subagent is a separate child session, so its completion/failure only drives pet animations — no bubble, system notification, or chime
 - Background sessions are watched regardless of the activity scope, so switching away does not lose the completion
 

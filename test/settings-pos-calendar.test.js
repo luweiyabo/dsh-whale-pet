@@ -34,12 +34,13 @@ test('旧配置（无 posX/calendar）仍可通过校验并补默认值', () => 
     assert.equal(legacy.calendar.enabled, true);
 });
 
-test('通知开关默认开启，可单独关闭', () => {
+test('回合提示只有一个总开关（默认开启，可关闭）', () => {
     const schema = buildSettingsSchema(z);
     const defaults = schema({});
-    assert.deepEqual(defaults.notify, { done: true, error: true, waiting: true, system: true, sound: true });
-    const off = schema({ notify: { waiting: false, system: false } });
-    assert.equal(off.notify.waiting, false);
-    assert.equal(off.notify.system, false);
-    assert.equal(off.notify.done, true);
+    assert.deepEqual(defaults.notify, { enabled: true });
+    const off = schema({ notify: { enabled: false } });
+    assert.equal(off.notify.enabled, false);
+    // 旧配置的细分键不再参与校验结果：总开关是唯一入口
+    const legacy = schema({ notify: { done: false, sound: false } });
+    assert.equal(legacy.notify.enabled, true);
 });

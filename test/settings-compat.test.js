@@ -116,11 +116,11 @@ for (const [label, api] of [
     });
 }
 
-test('余额设置分区与授权开关能在表单中渲染', () => {
+test('低余额提醒开关并入「显示与行为」分区', () => {
     const client = loadClient();
     const form = client.plugin.__internals.SettingsForm({
         draft: client.plugin.__internals.mergeConfig({
-            balance: { alert: true, allowApiKey: true },
+            balance: { alert: true },
         }),
         onPatch() {},
         saving: false,
@@ -135,11 +135,14 @@ test('余额设置分区与授权开关能在表单中渲染', () => {
         bare: true,
     });
     const text = JSON.stringify(form);
-    assert.ok(text.includes('secBalance'));
+    assert.ok(text.includes('secParams'));
     assert.ok(text.includes('labelBalanceAlert'));
-    assert.ok(text.includes('labelAllowApiKey'));
-    assert.ok(text.includes('labelThresholdCny'));
-    assert.ok(text.includes('labelBalanceInterval'));
+    // 不再单独渲染「账户余额」分区，也不显示其余余额参数。
+    assert.ok(!text.includes('secBalance'));
+    assert.ok(!text.includes('labelAllowApiKey'));
+    assert.ok(!text.includes('labelThresholdCny'));
+    assert.ok(!text.includes('labelBalanceInterval'));
+    assert.ok(!text.includes('labelTurnRefresh'));
 });
 
 test('设置表单在场期间收起桌宠：计数广播、卸载后恢复', () => {

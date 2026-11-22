@@ -59,27 +59,34 @@ test('包含文字的动画始终不镜像', () => {
     assert.equal(animFacingTransform('coding', 'left'), '');
 });
 
-test('余额配置默认值与合并：坏类型回落、阈值逐币种覆盖', () => {
+test('余额配置默认值可被配置文件覆盖，设置页只保留提醒开关', () => {
     const base = mergeConfig();
-    assert.equal(base.balance.alert, false);
-    assert.equal(base.balance.allowApiKey, false);
+    assert.equal(base.balance.alert, true);
+    assert.equal(base.balance.allowApiKey, true);
     assert.equal(base.balance.refreshMs, 60000);
-    assert.deepEqual(base.balance.thresholds, { CNY: 20, USD: 3 });
+    assert.equal(base.balance.turnRefresh, true);
+    assert.deepEqual(base.balance.thresholds, { CNY: 5, USD: 1 });
+    assert.deepEqual(base.balance.quotaAlert, { weeklyPct: 5, monthlyPct: 5 });
 
+    // 设置页不再提供输入框，但配置文件里的值必须继续生效。
     const merged = mergeConfig({
         balance: {
-            alert: true,
-            allowApiKey: true,
+            alert: false,
+            allowApiKey: false,
             refreshMs: 300000,
+            turnRefresh: false,
             timeoutMs: 15000,
-            thresholds: { CNY: 5, USD: -1, EUR: 9 },
+            thresholds: { CNY: 8, USD: 2, EUR: 9 },
+            quotaAlert: { weeklyPct: 7, monthlyPct: 3 },
         },
     });
-    assert.equal(merged.balance.alert, true);
-    assert.equal(merged.balance.allowApiKey, true);
+    assert.equal(merged.balance.alert, false);
+    assert.equal(merged.balance.allowApiKey, false);
     assert.equal(merged.balance.refreshMs, 300000);
+    assert.equal(merged.balance.turnRefresh, false);
     assert.equal(merged.balance.timeoutMs, 15000);
-    assert.deepEqual(merged.balance.thresholds, { CNY: 5, USD: 3 });
+    assert.deepEqual(merged.balance.thresholds, { CNY: 8, USD: 2 });
+    assert.deepEqual(merged.balance.quotaAlert, { weeklyPct: 7, monthlyPct: 3 });
 
     const bad = mergeConfig({
         balance: {
@@ -88,13 +95,16 @@ test('余额配置默认值与合并：坏类型回落、阈值逐币种覆盖',
             refreshMs: 12345,
             timeoutMs: 1,
             thresholds: 'nope',
+            quotaAlert: { weeklyPct: -1, monthlyPct: 101 },
         },
     });
-    assert.equal(bad.balance.alert, false);
-    assert.equal(bad.balance.allowApiKey, false);
+    assert.equal(bad.balance.alert, true);
+    assert.equal(bad.balance.allowApiKey, true);
     assert.equal(bad.balance.refreshMs, 60000);
+    assert.equal(bad.balance.turnRefresh, true);
     assert.equal(bad.balance.timeoutMs, 12000);
-    assert.deepEqual(bad.balance.thresholds, { CNY: 20, USD: 3 });
+    assert.deepEqual(bad.balance.thresholds, { CNY: 5, USD: 1 });
+    assert.deepEqual(bad.balance.quotaAlert, { weeklyPct: 5, monthlyPct: 5 });
 });
 
 test('日历感知常开：旧配置里的关闭值在合并时归一为开启', () => {
@@ -257,11 +267,10 @@ test('规则和错误保持时间为零时立即过期', async () => {
     assert.equal(states.at(-1)['rule:instant'], undefined);
 });
 
-test('通知配置：默认五个开关开启，坏值回落默认', () => {
+test('通知配置：只有一个总开关，坏值回落默认', () => {
     const defaults = mergeConfig(null).notify;
-    assert.deepEqual(defaults, { done: true, error: true, waiting: true, system: true, sound: true });
-    const merged = mergeConfig({ notify: { done: false, sound: 'nope', system: null } }).notify;
-    assert.equal(merged.done, false);
-    assert.equal(merged.sound, true);
-    assert.equal(merged.system, true);
+    assert.deepEqual(defaults, { enabled: true });
+    assert.equal(mergeConfig({ notify: { enabled: false } }).notify.enabled, false);
+    assert.equal(mergeConfig({ notify: { enabled: 'nope' } }).notify.enabled, true);
+    assert.equal(mergeConfig({ notify: null }).notify.enabled, true);
 });

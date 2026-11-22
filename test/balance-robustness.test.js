@@ -168,13 +168,13 @@ test('金额文案支持多币种', () => {
         ]),
         'US$ 1.00 · CNY 7.00'
     );
-    // 账户余额带 8 位小数时统一按两位小数展示；整数补 .00
+    // 账户余额带 8 位小数时直接截断两位；整数补 .00
     assert.equal(
         meterAmountText([
             { currency: 'CNY', total: '18.25840318' },
             { currency: 'USD', total: '3' },
         ]),
-        'CNY 18.26 · USD 3.00'
+        'CNY 18.25 · USD 3.00'
     );
 });
 

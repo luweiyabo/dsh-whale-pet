@@ -23,16 +23,16 @@
 
 import { formatDuration, formatTokens } from './schedule.js';
 
-/** 三类可提示事件（同时也是配置键） */
+/** 三类可提示事件（entry.kind 的取值） */
 export const NOTIFY_KINDS = ['done', 'error', 'waiting'];
 
-/** 默认配置（与宿主 schema 的默认值保持一致） */
+/**
+ * 默认配置（与宿主 schema 的默认值保持一致）：只有**一个总开关**。
+ * 系统通知与提示音由运行环境决定（安全上下文 / 授权 / 构造函数），不再单独配置；
+ * 旧版本配置里的 done/error/waiting/system/sound 单键仍被 notifyDecision 兼容读取。
+ */
 export const DEFAULT_NOTIFY = {
-    done: true,
-    error: true,
-    waiting: true,
-    system: true,
-    sound: true,
+    enabled: true,
 };
 
 /** 卡片自动消失时长（ms）；waiting 由 resolved 撤销，超时只是清理兜底 */
@@ -96,6 +96,8 @@ export function notificationEnvironment(scope) {
  *
  * 输入：kind / notify 配置 / visible / focused / sessionId / currentSessionId /
  *       secure / supported / permission
+ * 配置里只有总开关 enabled；system/sound 若显式写 false 仍生效（高级用法），
+ * 缺省视为开启。
  * 输出：{ channel, title, card }
  *   channel: 'none' | 'bubble' | 'card' | 'system' | 'sound'
  *   title:   是否叠加标题 `●`
@@ -108,6 +110,11 @@ export function channelDecision(input) {
     var cfg = i.notify || DEFAULT_NOTIFY;
     var visible = i.visible !== false;
     var focused = i.focused !== false;
+    var systemReady =
+        cfg.system !== false && i.secure === true && i.supported === true && i.permission === 'granted';
+    // preferSystem：重要且罕见的事件（低余额）不等用户切走，系统通知可用就直接发 ——
+    // 只出气泡不够明显，用户可能正盯着别处。
+    if (i.preferSystem === true && systemReady) return { channel: 'system', title: false, card: false };
     if (visible && focused) {
         // sessionScoped=false：全局提醒（余额）在聚焦时只出气泡，不卡片化。
         if (i.sessionScoped === false) return { channel: 'bubble', title: false, card: false };
@@ -117,8 +124,6 @@ export function channelDecision(input) {
         return { channel: 'card', title: false, card: true };
     }
 
-    var systemReady =
-        cfg.system !== false && i.secure === true && i.supported === true && i.permission === 'granted';
     if (systemReady) return { channel: 'system', title: false, card: false };
 
     // 系统通知不可用：声音是唯一「人不在页面也能感知」的通道；关掉声音则回前台补卡
@@ -131,8 +136,9 @@ export function notifyDecision(input) {
     var cfg = i.notify || DEFAULT_NOTIFY;
     var kind = i.kind;
     var none = { channel: 'none', title: false, card: false };
+    if (cfg.enabled === false) return none;
     if (NOTIFY_KINDS.indexOf(kind) === -1) return none;
-    if (cfg[kind] === false) return none;
+    if (cfg[kind] === false) return none; // 旧配置的单事件开关：仍尊重，避免升级后突然变吵
     return channelDecision(i);
 }
 

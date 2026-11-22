@@ -75,7 +75,7 @@ function remoteSettingsAdapter(getSettings) {
 export function resolveHostApi(connection, services = {}) {
     if (connection?.api) return connection.api;
 
-    const { sessions, remote, remoteAccount, uiSession, getSettings, modern } = services;
+    const { sessions, remote, remoteAccount, uiSession, getSettings, modern, modelDirectories } = services;
 
     let call = null;
     let settings;
@@ -113,6 +113,9 @@ export function resolveHostApi(connection, services = {}) {
     }
 
     const api = { settings };
+    if (uiSession && uiSession.current && typeof uiSession.current.getSnapshot === 'function') {
+        api.uiSession = uiSession;
+    }
     // 子代理（subagent）会话判定：宿主把子代理实现成独立的子会话，它们会出现在
     // 会话列表里（flattenLineage 按 parentId 缩进）、也会各自发 turn/end，
     // 但「用户在对话的会话」只有父会话 —— 子代理完成不该弹任何提示。
@@ -150,23 +153,72 @@ export function resolveHostApi(connection, services = {}) {
             },
         };
     }
-    if (sessions?.list && remoteSession) {
+    if (sessions?.list) {
         api.sessionList = sessions.list;
         api.sessions = {
             async models({ sessionId }, signal) {
-                const projection = sessions
-                    .binding?.(sessionId)
-                    ?.session.projections.faceOf('modelSelection')
-                    .getSnapshot();
+                // 官方 model directory 同时合并「会话选择」与「目录默认模型」。
+                // 新会话的 modelSelection 投影为空，但用户已经选了模型时，current 只在这里。
+                if (modelDirectories && typeof modelDirectories.directoryFor === 'function') {
+                    try {
+                        const directory = modelDirectories.directoryFor(sessionId);
+                        if (directory && typeof directory.load === 'function') await directory.load();
+                        const state =
+                            directory && directory.store && directory.store.getSnapshot
+                                ? directory.store.getSnapshot()
+                                : null;
+                        const chosen =
+                            state && state.current && state.current.provider && state.current.model
+                                ? state.current
+                                : state && state.pending && state.pending.provider && state.pending.model
+                                  ? state.pending
+                                  : null;
+                        if (chosen) return { result: { ok: true, value: { current: chosen } } };
+                    } catch {
+                        /* 子代理/旧宿主没有可用目录：继续读投影 */
+                    }
+                }
+                // 会话刚打开时 modelSelection 投影可能还没拉取。先让宿主补投影，
+                // 否则 0.2.x 会一直停在"等待模型调用"，哪怕会话早已选好模型。
+                if (typeof sessions.refreshProjections === 'function') {
+                    try {
+                        await sessions.refreshProjections(sessionId);
+                    } catch {
+                        /* 离线/旧宿主：继续读现有投影 */
+                    }
+                }
+                let projection;
+                try {
+                    projection = sessions
+                        .binding?.(sessionId)
+                        ?.session.projections.faceOf('modelSelection')
+                        .getSnapshot();
+                } catch {
+                    projection = undefined;
+                }
                 const current = projection?.next || projection?.lastUsed;
                 if (current) return { result: { ok: true, value: { current } } };
+                // 官方 modelCatalog 同时给出目录默认模型：新会话/投影尚未落盘时，
+                // 这里就是 UI 当前显示的选择，不需要等一次模型调用。
+                if (remoteSession && typeof remoteSession.modelCatalog === 'function') {
+                    try {
+                        const response = await remoteSession.modelCatalog();
+                        if (response && response.ok && response.value && response.value.default) {
+                            return { result: { ok: true, value: { current: response.value.default } } };
+                        }
+                    } catch {
+                        /* 目录尚未就绪：继续旧宿主 RPC */
+                    }
+                }
                 if (!call) return { result: { ok: true, value: { current: undefined } } };
                 const response = await call('session/modelCatalog', {}, signal);
                 return { result: { ok: true, value: { current: response.result.value.default } } };
             },
         };
-        api.subscribeActivity = (emit, options) =>
-            subscribeSessionActivity({ ...services, remoteSession }, emit, options);
+        if (remoteSession) {
+            api.subscribeActivity = (emit, options) =>
+                subscribeSessionActivity({ ...services, remoteSession }, emit, options);
+        }
     }
     return api;
 }

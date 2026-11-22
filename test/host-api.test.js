@@ -61,6 +61,143 @@ test('新版宿主 API 转发配置 RPC，并优先读取模型投影', async ()
     assert.equal(calls.at(-1).endpoint, 'session/modelCatalog');
 });
 
+test('modern 宿主先刷新模型投影再返回当前模型', async () => {
+    let refreshed = 0;
+    const projection = observable({});
+    const sessions = {
+        list: observable({ current: 's1', ids: ['s1'], byId: { s1: { running: false } } }),
+        async refreshProjections(sessionId) {
+            refreshed += 1;
+            projection.set({ next: { provider: 'deepseek', model: 'deepseek-chat' } });
+            return sessionId;
+        },
+        binding: () => ({ session: { projections: { faceOf: () => projection } } }),
+    };
+    const settings = {
+        describe: async () => ({ ok: true, value: { namespaces: [] } }),
+        update: async () => ({ ok: true, value: {} }),
+    };
+    const api = resolveHostApi(
+        {},
+        { sessions, remote: { session: {} }, modern: true, getSettings: () => settings }
+    );
+    assert.deepEqual((await api.sessions.models({ sessionId: 's1' })).result.value.current, {
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+    });
+    assert.equal(refreshed, 1);
+});
+
+test('modern 宿主投影刷新后仍为空时返回 undefined，不伪造模型', async () => {
+    const sessions = {
+        list: observable({ current: 's1', ids: ['s1'], byId: { s1: {} } }),
+        async refreshProjections() {},
+        binding: () => ({ session: { projections: { faceOf: () => observable({}) } } }),
+    };
+    const settings = {
+        describe: async () => ({ ok: true, value: { namespaces: [] } }),
+        update: async () => ({ ok: true, value: {} }),
+    };
+    const api = resolveHostApi(
+        {},
+        { sessions, remote: { session: {} }, modern: true, getSettings: () => settings }
+    );
+    assert.equal((await api.sessions.models({ sessionId: 's1' })).result.value.current, undefined);
+});
+
+test('优先使用官方 model directory 的 current（含新会话默认模型）', async () => {
+    const projection = observable({});
+    const sessions = {
+        list: observable({ current: 's1', ids: ['s1'], byId: { s1: {} } }),
+        binding: () => ({ session: { projections: { faceOf: () => projection } } }),
+    };
+    const connection = {
+        rpc: {
+            async call() {
+                throw new Error('should not call');
+            },
+        },
+    };
+    const api = resolveHostApi(connection, {
+        sessions,
+        remote: { session: {} },
+        modelDirectories: {
+            directoryFor() {
+                return {
+                    async load() {},
+                    store: {
+                        getSnapshot: () => ({
+                            current: { provider: 'deepseek-account', model: 'deepseek-flash' },
+                        }),
+                    },
+                };
+            },
+        },
+    });
+    assert.deepEqual((await api.sessions.models({ sessionId: 's1' })).result.value.current, {
+        provider: 'deepseek-account',
+        model: 'deepseek-flash',
+    });
+});
+
+test('model directory 不可用时回落到会话投影', async () => {
+    const projected = { provider: 'moonshot', model: 'kimi-k2' };
+    const projection = observable({ next: projected });
+    const sessions = {
+        list: observable({ current: 's1', ids: ['s1'], byId: { s1: {} } }),
+        binding: () => ({ session: { projections: { faceOf: () => projection } } }),
+    };
+    const api = resolveHostApi(
+        {
+            rpc: {
+                async call() {
+                    throw new Error('should not call');
+                },
+            },
+        },
+        {
+            sessions,
+            remote: { session: {} },
+            modelDirectories: {
+                directoryFor() {
+                    throw new Error('no scope');
+                },
+            },
+        }
+    );
+    assert.deepEqual((await api.sessions.models({ sessionId: 's1' })).result.value.current, projected);
+});
+
+test('model directory 缺失时用官方 modelCatalog 默认模型', async () => {
+    const sessions = {
+        list: observable({ current: 's1', ids: ['s1'], byId: { s1: {} } }),
+        binding: () => ({ session: { projections: { faceOf: () => observable({}) } } }),
+    };
+    const api = resolveHostApi(
+        {},
+        {
+            sessions,
+            remoteSession: {
+                async modelCatalog() {
+                    return {
+                        ok: true,
+                        value: { default: { provider: 'deepseek-account', model: 'deepseek-flash' } },
+                    };
+                },
+            },
+            modern: true,
+            getSettings: () => ({
+                describe: async () => ({ ok: true, value: { namespaces: [] } }),
+                update: async () => ({ ok: true, value: {} }),
+            }),
+        }
+    );
+    assert.deepEqual((await api.sessions.models({ sessionId: 's1' })).result.value.current, {
+        provider: 'deepseek-account',
+        model: 'deepseek-flash',
+    });
+});
+
 test('旧版 connection.api 保持原样返回', () => {
     const legacy = { settings: {}, events: {} };
     assert.equal(resolveHostApi({ api: legacy, rpc: { call() {} } }), legacy);

@@ -16,11 +16,14 @@ import {
 import {
     BALANCE_ALERT_STORAGE_KEY,
     DEFAULT_BALANCE,
+    QUOTA_ALERT_REMAINING_PCT,
     addDecimal,
     decimalCompare,
     evaluateBalanceAlerts,
+    evaluateQuotaAlerts,
     formatBalanceAlert,
     formatMoney,
+    formatQuotaAlert,
     mergeWalletBalances,
     normalizeDecimal,
     readAlertStore,
@@ -213,8 +216,27 @@ window.__ModuleLoader__.load({
             // 通知气泡：停留 8 秒，悬停暂停（方便点中）
             '.wp-bubble-notify{animation-duration:8s}',
             '.wp-bubble-notify:hover{animation-play-state:paused}',
-            '.wp-bubble-action:hover{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:14px}',
-            '.wp-bubble-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:14px}',
+            '.wp-bubble-action:hover{filter:brightness(.97)}',
+            '.wp-bubble-balance{pointer-events:auto;cursor:default;max-width:300px;min-width:170px;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 5px 14px rgba(0,0,0,.12)}',
+            '.wp-bubble-balance::after{display:none}',
+            '.wp-bubble-balance.is-open{min-width:260px;max-width:340px;padding:12px 14px}',
+            '.wp-bubble-balance .wp-bubbleText{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+            '.wp-balancePanel{margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2);text-align:left;cursor:default}',
+            '.wp-balancePanelHead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+            '.wp-balanceRow{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-top:5px;font-size:13px}',
+            '.wp-balanceCurrency{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+            '.wp-balanceAmount{font-variant-numeric:tabular-nums;font-weight:600}',
+            '.wp-balanceSep{color:var(--dsw-alias-label-tertiary)}',
+            '.wp-balanceDetail{margin:6px 0 0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:normal}',
+            '.wp-balanceUpdated{font-variant-numeric:tabular-nums}',
+            '.wp-balanceQuota{margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}',
+            '.wp-balanceQuotaRow{display:grid;grid-template-columns:28px 1fr 36px 42px;align-items:center;gap:7px;margin-top:6px;font-size:11px;color:var(--dsw-alias-label-secondary)}',
+            '.wp-balanceQuotaLabel{font-variant-numeric:tabular-nums}',
+            '.wp-balanceQuotaBar{height:5px;background:var(--dsw-alias-bg-layer-1);border-radius:999px;overflow:hidden}',
+            '.wp-balanceQuotaFill{display:block;height:100%;background:var(--dsw-alias-brand-primary);border-radius:999px}',
+            '.wp-balanceQuotaPct{text-align:right;font-variant-numeric:tabular-nums}',
+            '.wp-balanceQuotaReset{text-align:right;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}',
+            '.wp-bubble-action:focus-visible{outline:none;filter:brightness(.94)}',
             // ===== 右键菜单：fixed 定位浮层，独立于舞台可点击 =====
             '.wp-menu{position:fixed;z-index:45;pointer-events:auto;min-width:150px;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;display:flex;flex-direction:column}',
             '.wp-menuItem{appearance:none;font:inherit;cursor:pointer;text-align:left;background:0 0;border:0;border-radius:7px;padding:7px 12px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
@@ -242,6 +264,7 @@ window.__ModuleLoader__.load({
             '.wp-sf-customDir{display:flex;align-items:center;gap:8px;min-width:0}',
             '.wp-sf-customPath{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
             '.wp-sf-customHint{margin:4px 0 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}',
+            '.wp-sf-notifyStatus{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.wp-sf-notifyStatus>.wp-sf-customHint{margin:0}',
             '.wp-sf-fileInput{display:none}',
             '.wp-sf-uploadStatus{margin:5px 0 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}',
             '.wp-sf-uploadError{color:var(--dsw-alias-label-error)}',
@@ -788,6 +811,35 @@ window.__ModuleLoader__.load({
             var mm = String(d.getMinutes()).padStart(2, '0');
             return hh + ':' + mm;
         }
+        /** 额度窗口摘要：5h 62% · 周 31%；没有可用窗口返回空串。 */
+        function quotaSummary(quota) {
+            if (!quota || quota.status !== 'ready' || !Array.isArray(quota.windows)) return '';
+            return quota.windows
+                .filter(
+                    (w) =>
+                        w &&
+                        w.label &&
+                        w.usedPct !== null &&
+                        w.usedPct !== undefined &&
+                        Number.isFinite(Number(w.usedPct))
+                )
+                .slice(0, 2)
+                .map((w) => w.label + ' ' + Math.round(Number(w.usedPct)) + '%')
+                .join(' · ');
+        }
+
+        /** 重置时间 → 2h15m / 3d；仅用于气泡详情，不参与业务判断。 */
+        function formatQuotaReset(ts) {
+            var ms = Number(ts) - Date.now();
+            if (!Number.isFinite(ms) || ms <= 0) return '';
+            var minutes = Math.ceil(ms / 60000);
+            if (minutes < 60) return minutes + 'm';
+            var hours = Math.floor(minutes / 60);
+            var rest = minutes % 60;
+            if (hours < 24) return hours + 'h' + (rest ? ' ' + rest + 'm' : '');
+            return Math.ceil(hours / 24) + 'd';
+        }
+
         /**
          * 余额气泡文案。
          * 关键：查询失败但手里还有上一次的成功值时，继续展示那个值并标注时间，
@@ -797,13 +849,20 @@ window.__ModuleLoader__.load({
         function formatMeterText(mb, labels) {
             var head = labels.balance + (mb.providerLabel ? mb.providerLabel + ' · ' : '');
             if (mb.status === 'unsupported') return head + labels.unsupported;
+            if (mb.status === 'resolving')
+                return head + (labels.resolving || labels.loading || labels.waiting);
             if (mb.status === 'waiting') return head + labels.waiting;
             if (mb.status === 'loading') return head + (labels.loading || labels.waiting);
             if (mb.status === 'consent-required') return head + (labels.consent || labels.failed);
             if (mb.status === 'signed-out') return head + (labels.signedOut || labels.failed);
             if (mb.status === 'account-unavailable')
                 return head + (labels.accountUnavailable || labels.failed);
-            if (mb.status === 'plan') return head + (labels.plan || labels.unsupported);
+            if (mb.status === 'plan') {
+                var summary = quotaSummary(mb.quota);
+                if (!summary && mb.quota && mb.quota.status === 'consent-required')
+                    return head + (labels.consent || labels.plan || labels.unsupported);
+                return head + (summary || labels.plan || labels.unsupported);
+            }
             var reason = labels.errors && mb.errorCode ? labels.errors[mb.errorCode] : '';
             var amount = meterAmountText(mb.balances);
             if (!amount) return head + (reason || labels.failed);
@@ -816,6 +875,59 @@ window.__ModuleLoader__.load({
             }
             return text;
         }
+        // 余额数字滚动：仅展示层插值，最终帧落到服务商返回的精确字符串。
+        // 余额气泡在临时通知出现时会被卸载；用模块级缓存保留上一次显示的金额，
+        // 重新挂载后从旧值滚到新值，否则用户只能看到数字直接跳变。
+        var balanceAmountCache = new Map();
+        function AnimatedAmount({ value, currency, cacheKey }) {
+            var target = formatMoney(value) || String(value == null ? '' : value);
+            var cacheId = cacheKey || currency || '';
+            var cached = balanceAmountCache.get(cacheId);
+            var initial = cached === undefined ? target : cached;
+            var [shown, setShown] = useState(initial);
+            var prevRef = useRef(initial);
+            useEffect(() => {
+                var from = prevRef.current;
+                prevRef.current = target;
+                if (target) balanceAmountCache.set(cacheId, target);
+                if (from === target || prefersReducedMotion()) {
+                    setShown(target);
+                    return;
+                }
+                var fromN = Number(from);
+                var toN = Number(target);
+                if (
+                    !Number.isFinite(fromN) ||
+                    !Number.isFinite(toN) ||
+                    Math.abs(fromN) > 1e12 ||
+                    Math.abs(toN) > 1e12
+                ) {
+                    setShown(target);
+                    return;
+                }
+                var fraction = target.indexOf('.') === -1 ? '' : target.slice(target.indexOf('.') + 1);
+                var decimals = Math.max(2, fraction.length);
+                var start = 0;
+                var raf = 0;
+                var tick = function (ts) {
+                    if (!start) start = ts;
+                    var progress = Math.min(1, (ts - start) / 650);
+                    var eased = 1 - Math.pow(1 - progress, 3);
+                    if (progress >= 1) {
+                        setShown(target);
+                        return;
+                    }
+                    setShown((fromN + (toN - fromN) * eased).toFixed(decimals));
+                    raf = requestAnimationFrame(tick);
+                };
+                raf = requestAnimationFrame(tick);
+                return function () {
+                    if (raf) cancelAnimationFrame(raf);
+                };
+            }, [target, cacheId]);
+            return h('span', { className: 'wp-balanceAmount' }, currency + ' ' + shown);
+        }
+
         // 诊断开关：默认关闭（宿主端 /whale-pet/api/debug 已移除，开启前需先恢复该路由）
         var WP_DEBUG = false;
         // 临时诊断：把通知链路的关键判定异步写到宿主日志（排查完删除）
@@ -1116,12 +1228,13 @@ window.__ModuleLoader__.load({
             // 日历感知：节日/季节动画只在应景时间出现在随机动作池。
             // 0.3 起常开（配置页不再提供开关），字段保留用于兼容旧配置。
             calendar: { enabled: true, festival: true, seasonal: true },
-            // 回合完成提示：三个事件开关 + 系统通知/提示音两条通道
+            // 回合完成提示：单一总开关（enabled）
             notify: { ...DEFAULT_NOTIFY },
             // 余额提示：来源分层 + 阈值 + API-key 授权
             balance: {
                 ...DEFAULT_BALANCE,
                 thresholds: { ...DEFAULT_BALANCE.thresholds },
+                quotaAlert: { ...DEFAULT_BALANCE.quotaAlert },
             },
             behavior: {
                 ...ACTIVITY_PRESETS.balanced,
@@ -1168,12 +1281,16 @@ window.__ModuleLoader__.load({
                     if (typeof user.notify[notiKey] === 'boolean') c.notify[notiKey] = user.notify[notiKey];
                 }
             }
+            // 设置页只暴露「低余额提醒」开关；其余余额参数仍从配置文件读取，
+            // 允许手动改 cordis.patch.yml / settings.yaml 后重启生效。
             if (user.balance && typeof user.balance === 'object') {
                 if (typeof user.balance.alert === 'boolean') c.balance.alert = user.balance.alert;
                 if (typeof user.balance.allowApiKey === 'boolean')
                     c.balance.allowApiKey = user.balance.allowApiKey;
                 if ([30000, 60000, 300000, 0].indexOf(user.balance.refreshMs) !== -1)
                     c.balance.refreshMs = user.balance.refreshMs;
+                if (typeof user.balance.turnRefresh === 'boolean')
+                    c.balance.turnRefresh = user.balance.turnRefresh;
                 if (
                     typeof user.balance.timeoutMs === 'number' &&
                     user.balance.timeoutMs >= 3000 &&
@@ -1185,6 +1302,13 @@ window.__ModuleLoader__.load({
                         var threshold = user.balance.thresholds[thresholdKey];
                         if (typeof threshold === 'number' && threshold >= 0 && threshold <= 1e9)
                             c.balance.thresholds[thresholdKey] = threshold;
+                    }
+                }
+                if (user.balance.quotaAlert && typeof user.balance.quotaAlert === 'object') {
+                    for (var quotaKey of ['weeklyPct', 'monthlyPct']) {
+                        var quotaPct = user.balance.quotaAlert[quotaKey];
+                        if (typeof quotaPct === 'number' && quotaPct >= 0 && quotaPct <= 100)
+                            c.balance.quotaAlert[quotaKey] = quotaPct;
                     }
                 }
             }
@@ -1520,7 +1644,8 @@ window.__ModuleLoader__.load({
             var bNow = (cfg && cfg.behavior) || DEFAULT_CONFIG.behavior;
             // 任一事件开关打开就要在后台会话上保持 watch（完成提示的数据来源）
             var notifyCfgNow = (cfg && cfg.notify) || DEFAULT_NOTIFY;
-            var notifyActive = !!(notifyCfgNow.done || notifyCfgNow.error || notifyCfgNow.waiting);
+            // 回合提示只有一个总开关：开着就要为后台运行会话开 follow
+            var notifyActive = notifyCfgNow.enabled !== false;
             arbOptsRef.current.debounceMs = bNow.debounceMs;
             arbOptsRef.current.lingerMs = bNow.lingerMs;
             arbOptsRef.current.errorHoldMs = bNow.errorHoldMs;
@@ -1542,6 +1667,16 @@ window.__ModuleLoader__.load({
                 api?.sessionList ? () => api.sessionList.getSnapshot() : emptySnapshot
             );
             if (sessionSnapshot) currentSession = sessionSnapshot.current;
+            // Desktop 0.2.x 的 sessions.list 不再带 current，当前会话在 uiSession.current。
+            var uiSessionSnapshot = useSyncExternalStore(
+                api?.uiSession?.current
+                    ? (listener) => api.uiSession.current.subscribe(listener)
+                    : emptySubscribe,
+                api?.uiSession?.current ? () => api.uiSession.current.getSnapshot() : emptySnapshot
+            );
+            if (!currentSession && uiSessionSnapshot) {
+                currentSession = uiSessionSnapshot.key || uiSessionSnapshot.sessionId || undefined;
+            }
             var currentSessionRef = useRef(null);
             currentSessionRef.current = currentSession;
             // 统计气泡文案翻译（bind 返回稳定引用，useCallback 闭包安全）
@@ -1597,6 +1732,11 @@ window.__ModuleLoader__.load({
             var [playing, setPlaying] = useState({ anim: IDLE, once: true, seq: 0 });
             // 文字气泡：{ text, seq }；seq 用于同文案重复触发时强制重建动画
             var [bubble, setBubble] = useState(null);
+            var [balanceBubble, setBalanceBubble] = useState(null);
+            var [balancePanelOpen, setBalancePanelOpen] = useState(false);
+            // 仅用于"临时气泡"悬停暂停自动消失。余额气泡自己也有悬停态，但两者
+            // 不能共用一个布尔：余额气泡被临时气泡替换时不会触发 mouseleave，
+            // 会把 paused 永久留在 true（点"刷新余额"后一直停在刷新文案）。
             var [bubbleHovered, setBubbleHovered] = useState(false);
             // 最近一次完成/待确认提示：右键菜单提供「回到该会话」的可靠入口
             var lastNotifyRef = useRef(null);
@@ -1709,6 +1849,7 @@ window.__ModuleLoader__.load({
                 providerLabel: null,
                 planKind: null,
                 balances: null,
+                quota: null,
                 failures: 0,
                 updatedAt: 0,
                 errorCode: null,
@@ -1731,6 +1872,7 @@ window.__ModuleLoader__.load({
             if (!balanceAlertRef.current) {
                 balanceAlertRef.current = readAlertStore(balanceStorageRef.current);
             }
+            var turnBalanceTimerRef = useRef(null);
             // ---- 每会话回合统计 ----
             // { turn, startedAt, endedAt, steps, usage, last }，按 sessionId 分开记。
             // 多会话（scope=any / 完成提示）并行回合必须各记各的，否则数字互相污染。
@@ -2080,9 +2222,14 @@ window.__ModuleLoader__.load({
             }, []);
             var showMeterBubble = useCallback(() => {
                 var c = cfgRef.current;
-                if (!c || c.meter === false) return;
-                var text = formatMeterText(meterBalanceRef.current, {
+                if (!c || c.meter === false) {
+                    setBalanceBubble(null);
+                    return;
+                }
+                var mb = meterBalanceRef.current;
+                var text = formatMeterText(mb, {
                     balance: tPet('meterBalance'),
+                    resolving: tPet('meterResolving'),
                     waiting: tPet('meterWaiting'),
                     unsupported: tPet('meterUnsupported'),
                     failed: tPet('meterFailed'),
@@ -2103,8 +2250,17 @@ window.__ModuleLoader__.load({
                         'missing-key': tPet('meterErrorMissingKey'),
                     },
                 });
-                // 常驻气泡：sticky=true，不自动消失
-                setBubble({ text: text, seq: Date.now(), sticky: true });
+                // 常驻余额气泡独立于临时通知层：通知消失后余额自动回来。
+                setBalanceBubble({
+                    text: text,
+                    seq: Date.now(),
+                    mb: {
+                        ...mb,
+                        balances: Array.isArray(mb.balances)
+                            ? mb.balances.map((item) => ({ ...item }))
+                            : null,
+                    },
+                });
             }, []);
             var persistBalanceAlert = useCallback(
                 (key, nextState) => {
@@ -2114,30 +2270,28 @@ window.__ModuleLoader__.load({
                 },
                 [isLeader]
             );
-            // 余额提醒：与回合提示共用通道，但 sessionScoped=false（余额是全局信息）。
-            var dispatchBalanceAlert = useCallback(
-                (mb, alerts) => {
-                    if (!alerts || !alerts.length) return;
+            // 余额/额度提醒共用通道决策；文案与 tag 由调用方给出。
+            // 低余额/额度不足都是"要立刻知道"的事件，通道优先级与回合提示不同：
+            //   1. 系统通知可用就直接发（不管页面是否聚焦 —— 只出气泡不够明显），
+            //      聚焦时同时保留页内气泡；
+            //   2. 系统通知不可用：失焦 → 提示音 + 标题圆点，聚焦 → 只出气泡。
+            var dispatchAlertText = useCallback(
+                (text, opts) => {
+                    if (!text || !text.title) return;
+                    var o = opts || {};
                     var cfgNow = cfgRef.current || DEFAULT_CONFIG;
                     var notifyCfg = cfgNow.notify || DEFAULT_NOTIFY;
                     var notifier = notifierRef.current;
-                    var text = formatBalanceAlert(alerts, mb.providerLabel, tPetRef.current);
-                    var tag =
-                        'whale-pet:balance:' +
-                        String(mb.source || 'unknown') +
-                        ':' +
-                        String(mb.provider || '');
-                    var id = tag;
-                    var decision = channelDecision({
-                        notify: notifyCfg,
-                        visible: pageVisible(),
-                        focused: pageFocused(),
-                        sessionScoped: false,
-                        secure: notifier.secureContext(),
-                        supported: notifier.supported(),
-                        permission: notifier.permission(),
-                    });
-                    var openBalance = () => {
+                    // Windows toast 的 Tag 上限很短，用稳定短 tag：同一来源重复提醒时替换而不是叠加
+                    var tag = o.tag || 'wp-alert';
+                    var focusedNow = pageVisible() && pageFocused();
+                    var showAlertBubble = () =>
+                        setBubble({
+                            text: text.title + ' · ' + text.body,
+                            seq: Date.now(),
+                            sticky: !!cfgNow.meter,
+                        });
+                    var openAlert = () => {
                         try {
                             window.focus();
                         } catch (e) {
@@ -2146,29 +2300,37 @@ window.__ModuleLoader__.load({
                         if (cfgRef.current && cfgRef.current.meter) showMeterBubble();
                         else showBubble(text.title + ' · ' + text.body);
                     };
+                    var decision = channelDecision({
+                        notify: notifyCfg,
+                        visible: pageVisible(),
+                        focused: pageFocused(),
+                        sessionScoped: false,
+                        // 低余额不等用户切走：能发系统通知就发
+                        preferSystem: true,
+                        secure: notifier.secureContext(),
+                        supported: notifier.supported(),
+                        permission: notifier.permission(),
+                    });
                     if (decision.channel === 'system') {
-                        postDebug({
-                            event: 'sys-payload',
-                            title: (sessionName ? text.title + ' · ' + sessionName : text.title).slice(
-                                0,
-                                120
-                            ),
-                            body: String(text.body || '').slice(0, 120),
-                            tag: 'whale-pet:' + entry.kind + ':' + (entry.sessionId || ''),
-                        });
                         var sent = notifier.send({
                             title: text.title,
                             body: text.body,
-                            icon: '/whale-pet/poster/idle.png',
+                            icon: '/whale-pet/poster/icon.png',
                             tag: tag,
                             requireInteraction: false,
-                            onClick: openBalance,
+                            onClick: openAlert,
                         });
-                        if (sent) return;
+                        postDebug({ event: 'sys-send', ok: sent, kind: o.kind || 'balance' });
+                        if (sent) {
+                            // 页面聚焦时再补一条页内气泡：双重可见，切回来也还有记录
+                            if (focusedNow) showAlertBubble();
+                            return;
+                        }
+                        // 被限流/构造失败：按"系统通知不可用"继续兜底
                         decision =
                             notifyCfg.sound !== false
-                                ? { channel: 'sound', title: true, card: false }
-                                : { channel: 'none', title: true, card: true };
+                                ? { channel: 'sound', title: !focusedNow, card: false }
+                                : { channel: 'none', title: !focusedNow, card: true };
                     }
                     if (decision.channel === 'sound') {
                         notifySoundRef.current.prime();
@@ -2177,11 +2339,7 @@ window.__ModuleLoader__.load({
                         return;
                     }
                     if (decision.channel === 'bubble') {
-                        setBubble({
-                            text: text.title + ' · ' + text.body,
-                            seq: Date.now(),
-                            sticky: !!(cfgRef.current && cfgRef.current.meter),
-                        });
+                        showAlertBubble();
                         return;
                     }
                     if (decision.card || decision.channel === 'card') {
@@ -2189,13 +2347,13 @@ window.__ModuleLoader__.load({
                             notifyQueueReducer(q, {
                                 type: 'enqueue',
                                 card: {
-                                    id: id,
-                                    kind: 'balance',
+                                    id: tag,
+                                    kind: o.kind || 'balance',
                                     sessionId: null,
                                     title: text.title,
-                                    session: mb.providerLabel,
+                                    session: o.sourceLabel || '',
                                     meta: text.body,
-                                    actionLabel: tPetRef.current('balanceView'),
+                                    actionLabel: tPetRef.current(o.actionLabel || 'balanceView'),
                                 },
                                 status: pageVisible() ? 'shown' : 'queued',
                             })
@@ -2204,6 +2362,29 @@ window.__ModuleLoader__.load({
                     }
                 },
                 [showMeterBubble, bumpNotifyTitle]
+            );
+            var dispatchBalanceAlert = useCallback(
+                (mb, alerts) => {
+                    if (!alerts || !alerts.length) return;
+                    dispatchAlertText(formatBalanceAlert(alerts, mb.providerLabel, tPetRef.current), {
+                        tag: 'wp-bal-' + shortHash(sourceKey(mb.source, mb.provider)),
+                        sourceLabel: mb.providerLabel,
+                        kind: 'balance',
+                    });
+                },
+                [dispatchAlertText]
+            );
+            var dispatchQuotaAlert = useCallback(
+                (provider, providerLabel, alerts) => {
+                    if (!alerts || !alerts.length) return;
+                    dispatchAlertText(formatQuotaAlert(alerts, providerLabel, tPetRef.current), {
+                        tag: 'wp-quo-' + shortHash('quota:' + String(provider || 'unknown')),
+                        sourceLabel: providerLabel,
+                        // 卡片沿用余额卡片：点击即可打开余额/额度气泡。
+                        kind: 'balance',
+                    });
+                },
+                [dispatchAlertText]
             );
             var applyBalanceReady = useCallback(
                 (mb, balances, now) => {
@@ -2235,6 +2416,56 @@ window.__ModuleLoader__.load({
                 if (/ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|UND_ERR/.test(code)) return 'network';
                 return 'protocol';
             };
+            // 套餐额度独立拉取：Codex 读本地日志；OpenCode/GLM 走官方 quota 接口。
+            var refreshQuota = useCallback(
+                (mb, queryBase, seq) => {
+                    fetch('/whale-pet/api/balance?mode=quota' + queryBase.replace('?', '&'))
+                        .then((r) => r.json())
+                        .then((d) => {
+                            if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                            if (d && d.status === 'ready' && Array.isArray(d.windows) && d.windows.length) {
+                                var at = d.at || Date.now();
+                                mb.quota = { status: 'ready', windows: d.windows, at: at };
+                                var cfgNow = cfgRef.current || DEFAULT_CONFIG;
+                                if (cfgNow.balance && cfgNow.balance.alert) {
+                                    var provider = d.provider || mb.provider || 'unknown';
+                                    var quotaKey = 'quota:' + provider;
+                                    var quotaAlertCfg = (cfgNow.balance && cfgNow.balance.quotaAlert) || {};
+                                    var result = evaluateQuotaAlerts({
+                                        state: sourceStateOf(balanceAlertRef.current, quotaKey),
+                                        windows: d.windows,
+                                        thresholds: {
+                                            weekly: quotaAlertCfg.weeklyPct,
+                                            monthly: quotaAlertCfg.monthlyPct,
+                                        },
+                                        thresholdPct: QUOTA_ALERT_REMAINING_PCT,
+                                        now: at,
+                                    });
+                                    if (result.changed) persistBalanceAlert(quotaKey, result.state);
+                                    if (result.alerts.length)
+                                        dispatchQuotaAlert(
+                                            provider,
+                                            d.providerLabel || mb.providerLabel,
+                                            result.alerts
+                                        );
+                                }
+                            } else {
+                                mb.quota = {
+                                    status: (d && d.status) || 'unavailable',
+                                    error: d && d.error,
+                                };
+                            }
+                            showMeterBubble();
+                        })
+                        .catch((error) => {
+                            if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                            mb.quota = { status: 'error', error: String((error && error.message) || error) };
+                            showMeterBubble();
+                        });
+                },
+                [showMeterBubble, persistBalanceAlert, dispatchQuotaAlert]
+            );
+
             // 余额节流拉取：先 meta 分类，再按来源走 account/wallet；plan/未授权不查。
             var refreshBalance = useCallback(
                 (opts) => {
@@ -2287,8 +2518,10 @@ window.__ModuleLoader__.load({
                                     mb.planKind = d.planKind || null;
                                     mb.providerLabel = d.providerLabel || mb.providerLabel;
                                     mb.balances = null;
+                                    mb.quota = null;
                                     mb.failures = 0;
                                     showMeterBubble();
+                                    refreshQuota(mb, queryBase, seq);
                                     return;
                                 }
                                 if (d && d.unsupported) {
@@ -2403,13 +2636,16 @@ window.__ModuleLoader__.load({
                         if (d.source === 'plan') {
                             mb.status = 'plan';
                             mb.balances = null;
+                            mb.quota = null;
                             mb.failures = 0;
                             showMeterBubble();
+                            refreshQuota(mb, queryBase, seq);
                             return;
                         }
                         if (d.source === 'unsupported') {
                             mb.status = 'unsupported';
                             mb.balances = null;
+                            mb.quota = null;
                             mb.failures = 0;
                             showMeterBubble();
                             return;
@@ -2434,6 +2670,7 @@ window.__ModuleLoader__.load({
                         } else if (mb.source === 'plan') {
                             mb.status = 'plan';
                             showMeterBubble();
+                            refreshQuota(mb, queryBase, seq);
                         } else if (mb.source === 'unsupported') {
                             mb.status = 'unsupported';
                             showMeterBubble();
@@ -2459,9 +2696,26 @@ window.__ModuleLoader__.load({
                     balanceEnabled,
                     showMeterBubble,
                     applyBalanceReady,
+                    refreshQuota,
                     persistBalanceAlert,
                     dispatchBalanceAlert,
                 ]
+            );
+
+            // 回合结束后的余额刷新：等服务商记账一小段时间，合并连续回合。
+            var scheduleTurnBalanceRefresh = useCallback(
+                (sessionId) => {
+                    if (!sessionId || sessionId !== currentSessionRef.current) return;
+                    var c = cfgRef.current;
+                    if (!c || !(c.meter || (c.balance && c.balance.alert))) return;
+                    if (c.balance && c.balance.turnRefresh === false) return;
+                    if (turnBalanceTimerRef.current) clearTimeout(turnBalanceTimerRef.current);
+                    turnBalanceTimerRef.current = setTimeout(() => {
+                        turnBalanceTimerRef.current = null;
+                        refreshBalance({ force: true });
+                    }, 1000);
+                },
+                [refreshBalance]
             );
 
             // ---- 余额模型采纳（启动预取与真实调用上下文共用） ----
@@ -2481,6 +2735,7 @@ window.__ModuleLoader__.load({
                         providerLabel: route,
                         planKind: null,
                         balances: null,
+                        quota: null,
                         failures: 0,
                         updatedAt: 0,
                         errorCode: null,
@@ -2504,6 +2759,18 @@ window.__ModuleLoader__.load({
             // 是会话选择/默认模型，无需先发生一次模型调用）；成功经 adoptModel
             // 立即拉余额并刷新常驻气泡；失败且尚无模型时回退"等待模型调用"
             // （request/context 事件兜底）。
+            // 最后兜底：客户端 projection/目录失效时，Host 仍能从当前会话的
+            // requestHeader/requestContext 或默认模型服务读到 provider/model。
+            var resolveModelFromHost = useCallback((sessionId) => {
+                var query = sessionId ? '?sessionId=' + encodeURIComponent(sessionId) : '';
+                return fetch('/whale-pet/api/model' + query)
+                    .then((r) => r.json())
+                    .then((d) =>
+                        d && d.ok && d.current && d.current.provider && d.current.model ? d.current : null
+                    )
+                    .catch(() => null);
+            }, []);
+
             var resolveSessionModel = useCallback(() => {
                 var fallbackWaiting = () => {
                     if (!currentModelRef.current.route && balanceEnabled()) {
@@ -2515,6 +2782,7 @@ window.__ModuleLoader__.load({
                             providerLabel: null,
                             planKind: null,
                             balances: null,
+                            quota: null,
                             failures: 0,
                             updatedAt: 0,
                             errorCode: null,
@@ -2527,16 +2795,27 @@ window.__ModuleLoader__.load({
                         showMeterBubble();
                     }
                 };
-                if (!api || !api.sessions || typeof api.sessions.models !== 'function') {
-                    fallbackWaiting();
-                    return Promise.resolve(false);
-                }
                 var sessionId = currentSessionRef.current;
-                if (!sessionId) {
-                    fallbackWaiting();
-                    return Promise.resolve(false);
+                // 没有当前会话 id 时仍请求 Host 的最近 live session；Desktop 的
+                // sessions.list 可能不暴露 current，但 Host 能看到 live session。
+                // 有会话但还没识别出模型：显示"正在识别"，不要显示"等待模型调用"。
+                if (balanceEnabled() && !currentModelRef.current.route) {
+                    meterBalanceRef.current.status = 'resolving';
+                    showMeterBubble();
                 }
                 var modelAtRequest = currentModelRef.current;
+                var adoptFromHost = () =>
+                    resolveModelFromHost(sessionId).then((hostSelection) => {
+                        if (sessionId && currentSessionRef.current !== sessionId) return false;
+                        if (currentModelRef.current !== modelAtRequest) return true;
+                        if (!hostSelection) {
+                            fallbackWaiting();
+                            return false;
+                        }
+                        return adoptModel(hostSelection.provider, hostSelection.model);
+                    });
+                if (!sessionId || !api || !api.sessions || typeof api.sessions.models !== 'function')
+                    return adoptFromHost();
                 return api.sessions
                     .models({ sessionId })
                     .then((res) => {
@@ -2545,17 +2824,11 @@ window.__ModuleLoader__.load({
                         var selection = parseSessionModelSelection(
                             res && res.result && res.result.ok ? res.result.value : null
                         );
-                        if (!selection) {
-                            fallbackWaiting();
-                            return false;
-                        }
+                        if (!selection) return adoptFromHost();
                         return adoptModel(selection.route, selection.model);
                     })
-                    .catch(() => {
-                        fallbackWaiting();
-                        return false;
-                    });
-            }, [api, adoptModel, showMeterBubble, balanceEnabled]);
+                    .catch(() => adoptFromHost());
+            }, [api, adoptModel, showMeterBubble, balanceEnabled, resolveModelFromHost]);
 
             // ---- 一次性动画播完的回调（endedRef 由 useVideoLayer 在 play 时读取） ----
             var endedRef = useRef(null);
@@ -2849,6 +3122,7 @@ window.__ModuleLoader__.load({
                     },
                     // 回合边界：开始重置该会话统计，结束定格并派发完成/失败提示
                     onTurn: (info) => {
+                        if (info.phase === 'end') scheduleTurnBalanceRefresh(info.sessionId);
                         var st = statsOf(info.sessionId);
                         if (info.phase === 'start') {
                             resetTurnStats(st, info.turn, info.at);
@@ -2923,6 +3197,7 @@ window.__ModuleLoader__.load({
                 cfg && cfg.scope,
                 cfg?.scope === 'current' ? currentSession : undefined,
                 notifyActive,
+                scheduleTurnBalanceRefresh,
             ]);
 
             // ---- 余额轮询：meter 或低余额提醒任一开启即活跃；关闭时清除常驻气泡 ----
@@ -2932,6 +3207,7 @@ window.__ModuleLoader__.load({
                 if (!active) {
                     // 全部关闭：清除常驻额度气泡（不影响临时文字气泡）
                     setBubble((b) => (b && b.sticky ? null : b));
+                    setBalanceBubble(null);
                     return;
                 }
                 // 开启时展示当前已识别模型的余额。尚无模型时不再干等首次模型调用：
@@ -2944,12 +3220,13 @@ window.__ModuleLoader__.load({
                         !!(api && api.sessions && typeof api.sessions.models === 'function');
                     meterBalanceRef.current = {
                         at: 0,
-                        status: canResolve ? 'loading' : 'waiting',
+                        status: canResolve ? 'resolving' : 'waiting',
                         source: null,
                         provider: null,
                         providerLabel: null,
                         planKind: null,
                         balances: null,
+                        quota: null,
                         failures: 0,
                         updatedAt: 0,
                         errorCode: null,
@@ -2986,12 +3263,13 @@ window.__ModuleLoader__.load({
                 currentModelRef.current = { route: '', model: '' };
                 meterBalanceRef.current = {
                     at: 0,
-                    status: 'waiting',
+                    status: 'resolving',
                     source: null,
                     provider: null,
                     providerLabel: null,
                     planKind: null,
                     balances: null,
+                    quota: null,
                     failures: 0,
                     updatedAt: 0,
                     errorCode: null,
@@ -3002,9 +3280,32 @@ window.__ModuleLoader__.load({
                     metaConsent: null,
                 };
                 showMeterBubble();
-                if (!sessionId) return;
+                // Desktop 可能拿不到当前会话 id：仍然让 Host 按最近 live session 解析。
                 resolveSessionModel();
             }, [currentSession, cfg && cfg.meter, cfg && cfg.balance && cfg.balance.alert, isLeader]);
+
+            // 组件卸载时清掉回合结束后的延迟刷新定时器
+            useEffect(
+                () => () => {
+                    if (turnBalanceTimerRef.current) {
+                        clearTimeout(turnBalanceTimerRef.current);
+                        turnBalanceTimerRef.current = null;
+                    }
+                },
+                []
+            );
+
+            // 气泡被替换时重置悬停标记：浏览器不会为"已被卸载且指针正好在上面的
+            // 旧节点"补发 mouseleave，若不重置，新气泡就永远等不到消失定时器。
+            useEffect(() => {
+                setBubbleHovered(false);
+            }, [bubble && bubble.seq]);
+
+            // 临时气泡出现时余额气泡会被隐藏；此时余额气泡不会收到 mouseleave，
+            // 详情面板要在它被隐藏时收起，避免临时气泡消失后又无故展开。
+            useEffect(() => {
+                if (bubble) setBalancePanelOpen(false);
+            }, [bubble && bubble.seq]);
 
             // ---- 气泡定时消失（临时气泡 3.6s；常驻额度气泡 sticky 不自动消失） ----
             useEffect(() => {
@@ -3443,7 +3744,8 @@ window.__ModuleLoader__.load({
             // 倾斜跟随：window pointermove 只记录目标值，rAF 弹簧插值逼近，
             // 写 fxRef 的 inline transform（不触发 React 重渲染）。指针远离或
             // 值归零后循环自停。拖拽/滑行/隐藏期间暂停，形变让位给拖拽拉伸。
-            var FX_TILT_RADIUS = 140; // 光标生效半径（px，自舞台边缘；超出即停止跟随）
+            var FX_TILT_ZONE = 30; // 光标生效范围（px，自舞台左右边缘；超出即停止跟随）
+            var FX_TILT_SPAN = 140; // 倾斜归一化跨度（距舞台中心多远达到最大倾角）
             var FX_TILT_MAX_DEG = 3.5; // 最大倾角
             var FX_TILT_MAX_PX = 5; // 光标方向最大位移（px）
             var FX_SPRING = 0.14; // 每帧插值系数（弹簧软硬）
@@ -3592,19 +3894,19 @@ window.__ModuleLoader__.load({
                     }
                     var r = c.rect;
                     var st = fxAnimRef.current;
-                    // 生效区：舞台左右各 FX_TILT_RADIUS、上下留窄边；区外目标归零
-                    // （循环自然衰减后自停）。此前横向只钳不归零，导致全屏都在跟随
+                    // 生效区：舞台左右各 FX_TILT_ZONE、上方 30px / 下方 60px；
+                    // 区外目标归零（循环自然衰减后自停）
                     if (
-                        e.clientY < r.top - 40 ||
+                        e.clientY < r.top - 30 ||
                         e.clientY > r.bottom + 60 ||
-                        e.clientX < r.left - FX_TILT_RADIUS ||
-                        e.clientX > r.right + FX_TILT_RADIUS
+                        e.clientX < r.left - FX_TILT_ZONE ||
+                        e.clientX > r.right + FX_TILT_ZONE
                     ) {
                         st.tgt = 0;
                         fxNudgeTilt();
                         return;
                     }
-                    var t = (e.clientX - (r.left + r.width / 2)) / FX_TILT_RADIUS;
+                    var t = (e.clientX - (r.left + r.width / 2)) / FX_TILT_SPAN;
                     st.tgt = Math.max(-1, Math.min(1, t));
                     fxNudgeTilt();
                 };
@@ -4336,6 +4638,135 @@ window.__ModuleLoader__.load({
                                 h('span', { className: 'wp-bubbleText' }, bubble.text),
                             ],
                         }),
+                    // 余额气泡：默认一行；点击展开详情（多币种、更新时间、快捷操作）
+                    !bubble &&
+                        balanceBubble &&
+                        (() => {
+                            var mb = balanceBubble.mb || {};
+                            var amountKeyOf = (item) =>
+                                (mb.source || '') + ':' + (mb.provider || '') + ':' + item.currency;
+                            var quotaRows =
+                                mb.quota && mb.quota.status === 'ready' && Array.isArray(mb.quota.windows)
+                                    ? mb.quota.windows.map((w) => {
+                                          var used = Math.max(0, Math.min(100, Number(w.usedPct) || 0));
+                                          return h('div', { key: w.key, className: 'wp-balanceQuotaRow' }, [
+                                              h('span', { className: 'wp-balanceQuotaLabel' }, w.label),
+                                              h(
+                                                  'span',
+                                                  { className: 'wp-balanceQuotaBar' },
+                                                  h('span', {
+                                                      className: 'wp-balanceQuotaFill',
+                                                      style: { width: used + '%' },
+                                                  })
+                                              ),
+                                              h(
+                                                  'span',
+                                                  { className: 'wp-balanceQuotaPct' },
+                                                  Math.round(used) + '%'
+                                              ),
+                                              w.resetAt
+                                                  ? h(
+                                                        'span',
+                                                        { className: 'wp-balanceQuotaReset' },
+                                                        formatQuotaReset(w.resetAt)
+                                                    )
+                                                  : null,
+                                          ]);
+                                      })
+                                    : null;
+                            var closedParts = [];
+                            if (mb.status === 'ready' && Array.isArray(mb.balances) && mb.balances.length) {
+                                closedParts.push(
+                                    h(
+                                        'span',
+                                        { key: 'head' },
+                                        tPet('meterBalance') +
+                                            (mb.providerLabel ? mb.providerLabel + ' · ' : '')
+                                    )
+                                );
+                                mb.balances.forEach((item, index) => {
+                                    if (index) {
+                                        closedParts.push(
+                                            h(
+                                                'span',
+                                                { key: 'sep' + index, className: 'wp-balanceSep' },
+                                                ' · '
+                                            )
+                                        );
+                                    }
+                                    closedParts.push(
+                                        h(AnimatedAmount, {
+                                            key: item.currency,
+                                            value: item.total,
+                                            currency: item.currency,
+                                            cacheKey: amountKeyOf(item),
+                                        })
+                                    );
+                                });
+                            }
+                            var rows =
+                                mb.status === 'ready' && Array.isArray(mb.balances)
+                                    ? mb.balances.map((item) =>
+                                          h('div', { key: item.currency, className: 'wp-balanceRow' }, [
+                                              h('span', { className: 'wp-balanceCurrency' }, item.currency),
+                                              h(AnimatedAmount, {
+                                                  value: item.total,
+                                                  currency: '',
+                                                  cacheKey: amountKeyOf(item),
+                                              }),
+                                          ])
+                                      )
+                                    : null;
+                            return h(
+                                'div',
+                                {
+                                    key: 'balance-bubble',
+                                    className:
+                                        'wp-bubble wp-bubble-balance wp-bubble-action wp-bubble-sticky' +
+                                        (balancePanelOpen ? ' is-open' : ''),
+                                    role: 'status',
+                                    // 详情只随悬停展开：移入展开，移出立即收起。
+                                    onMouseEnter: () => setBalancePanelOpen(true),
+                                    onMouseLeave: () => setBalancePanelOpen(false),
+                                },
+                                [
+                                    h(
+                                        'span',
+                                        { className: 'wp-bubbleText' },
+                                        closedParts.length ? closedParts : balanceBubble.text
+                                    ),
+                                    balancePanelOpen &&
+                                        h(
+                                            'div',
+                                            {
+                                                className: 'wp-balancePanel',
+                                            },
+                                            [
+                                                h('div', { className: 'wp-balancePanelHead' }, [
+                                                    h(
+                                                        'strong',
+                                                        null,
+                                                        mb.providerLabel || tPet('balanceAccountLabel')
+                                                    ),
+                                                    h(
+                                                        'span',
+                                                        { className: 'wp-balanceUpdated' },
+                                                        mb.updatedAt ? formatClock(mb.updatedAt) : ''
+                                                    ),
+                                                ]),
+                                                rows ||
+                                                    h(
+                                                        'p',
+                                                        { className: 'wp-balanceDetail' },
+                                                        balanceBubble.text
+                                                    ),
+                                                quotaRows &&
+                                                    h('div', { className: 'wp-balanceQuota' }, quotaRows),
+                                            ]
+                                        ),
+                                ]
+                            );
+                        })(),
                     // 右键菜单：fixed 定位浮层（wp-root pointer-events:none，菜单自身 auto）
                     menu &&
                         h('div', {
@@ -4531,14 +4962,16 @@ window.__ModuleLoader__.load({
                 // 回合完成提示
                 secBalance: '账户余额',
                 hintBalance: '先选来源（账户/套餐/钱包）；API-key 钱包只在显式授权后查询',
-                labelBalanceAlert: '低余额提醒',
-                hintBalanceAlert: '低于阈值时提醒一次；充值回到阈值以上后复位',
+                labelBalanceAlert: '余额提醒',
+                hintBalanceAlert: '钱包低于 CNY 5 / USD 1，或套餐周/月额度剩余 ≤5% 时提醒一次；恢复后复位',
                 labelAllowApiKey: '允许使用 API key 查询',
-                hintAllowApiKey: 'key 只在宿主使用，仅发往服务商官方余额端点；不写入日志或浏览器',
+                hintAllowApiKey: 'key 只在宿主使用，仅发往服务商官方余额/额度端点；不写入日志或浏览器',
                 labelThresholdCny: 'CNY 阈值',
                 hintThresholdCny: '低于该金额提醒；0 = 关闭人民币提醒',
                 labelThresholdUsd: 'USD 阈值',
                 hintThresholdUsd: '低于该金额提醒；0 = 关闭美元提醒',
+                labelTurnRefresh: '回合结束自动刷新',
+                hintTurnRefresh: '当前会话完成任务后自动更新余额',
                 labelBalanceInterval: '刷新间隔',
                 hintBalanceInterval: '页面不可见时仅账户/钱包来源按 5 分钟下限轮询',
                 balanceRefresh30s: '30 秒',
@@ -4547,6 +4980,8 @@ window.__ModuleLoader__.load({
                 balanceRefreshOff: '关闭',
                 hintBalanceSource:
                     '来源与错误状态会显示在宠物气泡；套餐/未授权不会自动查询。代理只读 HTTPS_PROXY/HTTP_PROXY，系统代理不生效',
+                labelNotify: '回合提示',
+                hintNotifyToggle: '回合结束、失败或等待你确认时提醒；切到其他软件时走系统通知',
                 secNotify: '回合提示',
                 hintNotify: '回合结束时在桌宠上方提示并联动动画；切到其他软件时走系统通知',
                 labelNotifyDone: '完成提示',
@@ -4577,7 +5012,8 @@ window.__ModuleLoader__.load({
                 selectHint: '点一下屏幕，让我走过去~',
                 unsaved: '等待自动保存',
                 meterBalance: '余额 ',
-                meterWaiting: '等待模型调用…',
+                meterResolving: '正在识别当前会话模型…',
+                meterWaiting: '当前会话尚未选择模型',
                 meterUnsupported: '当前服务商暂不支持',
                 meterFailed: '查询失败',
                 meterStale: '（上次 {time}，刷新失败）',
@@ -4597,6 +5033,10 @@ window.__ModuleLoader__.load({
                 balanceAccountLabel: 'DeepSeek 账户',
                 balanceAlertTitle: '余额偏低',
                 balanceAlertLine: '{amount}（阈值 {threshold}）',
+                quotaAlertTitle: '套餐额度不足',
+                quotaAlertLine: '{window}额度剩余 {remaining}%',
+                quotaWindowWeek: '周',
+                quotaWindowMonth: '月',
                 balanceView: '查看余额',
                 balanceEnableHint: '先在设置里开启「显示余额」或「低余额提醒」',
                 balanceRefreshing: '正在刷新余额…',
@@ -4810,15 +5250,18 @@ window.__ModuleLoader__.load({
                 secBalance: 'Account balance',
                 hintBalance:
                     'Source first (account / plan / wallet); API-key wallets are queried only after explicit consent',
-                labelBalanceAlert: 'Low-balance alert',
-                hintBalanceAlert: 'Alert once below the threshold; resets after topping up',
+                labelBalanceAlert: 'Balance alert',
+                hintBalanceAlert:
+                    'Alert once when the wallet drops below CNY 5 / USD 1, or weekly/monthly plan quota has 5% or less left; resets when restored',
                 labelAllowApiKey: 'Allow API-key queries',
                 hintAllowApiKey:
-                    "The key stays in the Host and is sent only to the provider's official balance endpoint",
+                    "The key stays in the Host and is sent only to the provider's official balance/quota endpoint",
                 labelThresholdCny: 'CNY threshold',
                 hintThresholdCny: 'Alert below this amount; 0 disables CNY alerts',
                 labelThresholdUsd: 'USD threshold',
                 hintThresholdUsd: 'Alert below this amount; 0 disables USD alerts',
+                labelTurnRefresh: 'Refresh after each turn',
+                hintTurnRefresh: 'Update the balance when the current session finishes a turn',
                 labelBalanceInterval: 'Refresh interval',
                 hintBalanceInterval: 'While hidden, only account/wallet sources poll, with a 5-minute floor',
                 balanceRefresh30s: '30 s',
@@ -4827,6 +5270,9 @@ window.__ModuleLoader__.load({
                 balanceRefreshOff: 'Off',
                 hintBalanceSource:
                     'The source and errors appear in the pet bubble; plans and unconsented wallets are never queried automatically. Proxy variables are read at launch; OS proxy settings are ignored',
+                labelNotify: 'Turn notifications',
+                hintNotifyToggle:
+                    'Remind when a turn finishes, fails, or waits for you; system notifications once you switch to another app',
                 secNotify: 'Turn notifications',
                 hintNotify:
                     'Show a bubble above the pet when a turn ends; use system notifications while you are in another app',
@@ -4860,7 +5306,8 @@ window.__ModuleLoader__.load({
                 selectHint: 'Click anywhere to send me there~',
                 unsaved: 'Waiting to auto-save',
                 meterBalance: 'Balance ',
-                meterWaiting: 'Waiting for a model call…',
+                meterResolving: 'Detecting the session model…',
+                meterWaiting: 'No model selected in this session',
                 meterUnsupported: 'Provider not supported',
                 meterFailed: 'Query failed',
                 meterStale: '(last {time}, refresh failed)',
@@ -4880,6 +5327,10 @@ window.__ModuleLoader__.load({
                 balanceAccountLabel: 'DeepSeek account',
                 balanceAlertTitle: 'Low balance',
                 balanceAlertLine: '{amount} (threshold {threshold})',
+                quotaAlertTitle: 'Plan quota low',
+                quotaAlertLine: '{window} quota {remaining}% left',
+                quotaWindowWeek: 'Weekly',
+                quotaWindowMonth: 'Monthly',
                 balanceView: 'View balance',
                 balanceEnableHint: 'Enable "Show balance" or "Low-balance alert" in Settings first',
                 balanceRefreshing: 'Refreshing balance…',
@@ -6696,6 +7147,62 @@ window.__ModuleLoader__.load({
                         control,
                     ],
                 });
+            // 回合提示：只暴露一个总开关。系统通知何时用由运行时判定（页面不可见时），
+            // 这里只在"开着但系统通知还没准备好"时给一行状态 + 授权按钮。
+            var notifySettings = draft.notify || DEFAULT_NOTIFY;
+            var notifyEnabled = notifySettings.enabled !== false;
+            var patchNotify = (key, value) =>
+                onPatch((d) => ({ ...d, notify: { ...(d.notify || DEFAULT_NOTIFY), [key]: value } }));
+            var systemAvailable = notifyEnv.secure && notifyEnv.supported;
+            var permText = !notifyEnv.supported
+                ? t('notifyPermUnsupported')
+                : !notifyEnv.secure
+                  ? t('notifyPermInsecure')
+                  : sysPerm === 'denied'
+                    ? t('notifyPermDenied')
+                    : sysPerm === 'granted'
+                      ? t('notifyPermReady')
+                      : t('notifyPermAsk');
+            // 授权就绪时不需要任何状态行；其它情况（未授权/被拒/非安全上下文/不支持）才提示
+            var notifyWarn =
+                notifyEnabled && sysPerm !== 'granted'
+                    ? h('div', {
+                          className: 'wp-sf-notifyStatus',
+                          children: [
+                              h('p', { className: 'wp-sf-customHint' }, permText),
+                              systemAvailable && sysPerm === 'default'
+                                  ? h(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            className: 'wp-sf-add',
+                                            onClick: requestNotifyPermission,
+                                        },
+                                        t('notifyPermAsk')
+                                    )
+                                  : null,
+                          ],
+                      })
+                    : null;
+            // 余额配置不再单独成区：低余额提醒开关并入「显示与行为」。
+            // 阈值、刷新间隔、API-key 授权、回合刷新与额度阈值不显示，
+            // 但可在配置文件里手动修改。
+            var balanceSettings = draft.balance || DEFAULT_BALANCE;
+            var balanceToggle = toggleItem(
+                'balanceAlert',
+                t('labelBalanceAlert'),
+                t('hintBalanceAlert'),
+                !!balanceSettings.alert,
+                (e) =>
+                    onPatch((d) => ({
+                        ...d,
+                        balance: {
+                            ...(d.balance || DEFAULT_BALANCE),
+                            alert: e.target.checked,
+                        },
+                    }))
+            );
+
             var paramsContent = h('div', {
                 children: [
                     h('div', {
@@ -6707,22 +7214,22 @@ window.__ModuleLoader__.load({
                             toggleItem('bubbles', t('labelBubbles'), t('hintBubbles'), !!draft.bubbles, (e) =>
                                 onPatch((d) => ({ ...d, bubbles: e.target.checked }))
                             ),
+                            toggleItem(
+                                'notify',
+                                t('labelNotify'),
+                                t('hintNotifyToggle'),
+                                notifyEnabled,
+                                (e) => {
+                                    var on = e.target.checked;
+                                    patchNotify('enabled', on);
+                                    // 勾选本身就是用户手势：顺手把浏览器通知权限问一次；
+                                    // 被拒也没关系，提示音 + 标题会兜底
+                                    if (on && systemAvailable && sysPerm === 'default')
+                                        requestNotifyPermission();
+                                }
+                            ),
                             toggleItem('meter', t('labelMeter'), t('hintMeter'), !!draft.meter, (e) =>
                                 onPatch((d) => ({ ...d, meter: e.target.checked }))
-                            ),
-                            toggleItem(
-                                'balanceAlert',
-                                t('labelBalanceAlert'),
-                                t('hintBalanceAlert'),
-                                !!(draft.balance && draft.balance.alert),
-                                (e) =>
-                                    onPatch((d) => ({
-                                        ...d,
-                                        balance: {
-                                            ...(d.balance || DEFAULT_BALANCE),
-                                            alert: e.target.checked,
-                                        },
-                                    }))
                             ),
                             toggleItem(
                                 'fx',
@@ -6733,8 +7240,10 @@ window.__ModuleLoader__.load({
                                 (e) => onPatch((d) => ({ ...d, fx: e.target.checked })),
                                 reducedMotion
                             ),
+                            balanceToggle,
                         ],
                     }),
+                    notifyWarn,
                     h('div', {
                         className: 'wp-sf-settingGrid',
                         children: [
@@ -6911,174 +7420,8 @@ window.__ModuleLoader__.load({
                 ],
             });
 
-            // 账户余额：来源分层由宿主判定；这里只配置提醒/阈值/刷新/授权。
-            var balanceSettings = draft.balance || DEFAULT_BALANCE;
-            var balanceThresholds = balanceSettings.thresholds || DEFAULT_BALANCE.thresholds;
-            var patchBalance = (key, value) =>
-                onPatch((d) => ({
-                    ...d,
-                    balance: { ...(d.balance || DEFAULT_BALANCE), [key]: value },
-                }));
-            var patchBalanceThreshold = (currency, value) =>
-                onPatch((d) => ({
-                    ...d,
-                    balance: {
-                        ...(d.balance || DEFAULT_BALANCE),
-                        thresholds: {
-                            ...((d.balance && d.balance.thresholds) || DEFAULT_BALANCE.thresholds),
-                            [currency]: value,
-                        },
-                    },
-                }));
-            var balanceContent = h('div', {
-                children: [
-                    toggleItem(
-                        'balanceAllowApiKey',
-                        t('labelAllowApiKey'),
-                        t('hintAllowApiKey'),
-                        !!balanceSettings.allowApiKey,
-                        (e) => patchBalance('allowApiKey', e.target.checked)
-                    ),
-                    balanceSettings.alert
-                        ? h('div', {
-                              className: 'wp-sf-settingGrid',
-                              children: [
-                                  settingItem(
-                                      'balanceCny',
-                                      t('labelThresholdCny'),
-                                      t('hintThresholdCny'),
-                                      numInput(
-                                          balanceThresholds.CNY,
-                                          (v) => patchBalanceThreshold('CNY', Math.max(0, v)),
-                                          '0.01'
-                                      )
-                                  ),
-                                  settingItem(
-                                      'balanceUsd',
-                                      t('labelThresholdUsd'),
-                                      t('hintThresholdUsd'),
-                                      numInput(
-                                          balanceThresholds.USD,
-                                          (v) => patchBalanceThreshold('USD', Math.max(0, v)),
-                                          '0.01'
-                                      )
-                                  ),
-                              ],
-                          })
-                        : null,
-                    h('div', {
-                        className: 'wp-sf-settingGrid',
-                        children: [
-                            settingItem(
-                                'balanceInterval',
-                                t('labelBalanceInterval'),
-                                t('hintBalanceInterval'),
-                                singleSelect(
-                                    balanceSettings.refreshMs,
-                                    [
-                                        [30000, t('balanceRefresh30s')],
-                                        [60000, t('balanceRefresh60s')],
-                                        [300000, t('balanceRefresh5m')],
-                                        [0, t('balanceRefreshOff')],
-                                    ],
-                                    (v) => patchBalance('refreshMs', Number(v))
-                                )
-                            ),
-                        ],
-                    }),
-                    h('p', { className: 'wp-sf-customHint' }, t('hintBalanceSource')),
-                ],
-            });
-
-            // 回合提示：三个事件开关 + 系统通知/提示音；系统通知需要安全上下文与授权
-            var notifySettings = draft.notify || DEFAULT_NOTIFY;
-            var patchNotify = (key, value) =>
-                onPatch((d) => ({ ...d, notify: { ...(d.notify || DEFAULT_NOTIFY), [key]: value } }));
-            var systemAvailable = notifyEnv.secure && notifyEnv.supported;
-            // 只有真正 granted 才算"开"：default（还没问过）显示为关，点开关即请求权限
-            var systemChecked = !!notifySettings.system && systemAvailable && sysPerm === 'granted';
-            var permText = !notifyEnv.supported
-                ? t('notifyPermUnsupported')
-                : !notifyEnv.secure
-                  ? t('notifyPermInsecure')
-                  : sysPerm === 'granted'
-                    ? t('notifyPermReady')
-                    : sysPerm === 'denied'
-                      ? t('notifyPermDenied')
-                      : t('notifyPermAsk');
-            var notifyContent = h('div', {
-                children: [
-                    h('div', {
-                        className: 'wp-sf-toggleGrid',
-                        children: [
-                            toggleItem(
-                                'notifyDone',
-                                t('labelNotifyDone'),
-                                t('hintNotifyDone'),
-                                !!notifySettings.done,
-                                (e) => patchNotify('done', e.target.checked)
-                            ),
-                            toggleItem(
-                                'notifyError',
-                                t('labelNotifyError'),
-                                t('hintNotifyError'),
-                                !!notifySettings.error,
-                                (e) => patchNotify('error', e.target.checked)
-                            ),
-                            toggleItem(
-                                'notifyWaiting',
-                                t('labelNotifyWaiting'),
-                                t('hintNotifyWaiting'),
-                                !!notifySettings.waiting,
-                                (e) => patchNotify('waiting', e.target.checked)
-                            ),
-                            toggleItem(
-                                'notifySystem',
-                                t('labelNotifySystem'),
-                                t('hintNotifySystem'),
-                                systemChecked,
-                                (e) => {
-                                    if (!e.target.checked) {
-                                        patchNotify('system', false);
-                                        return;
-                                    }
-                                    if (!systemAvailable) return;
-                                    // 必须在用户手势内请求权限（浏览器要求）
-                                    notifierRef.current.requestPermission().then((perm) => {
-                                        setSysPerm(perm);
-                                        if (perm === 'granted') patchNotify('system', true);
-                                    });
-                                },
-                                !systemAvailable || sysPerm === 'denied'
-                            ),
-                            toggleItem(
-                                'notifySound',
-                                t('labelNotifySound'),
-                                t('hintNotifySound'),
-                                !!notifySettings.sound,
-                                (e) => patchNotify('sound', e.target.checked)
-                            ),
-                        ],
-                    }),
-                    h('p', { className: 'wp-sf-customHint' }, permText),
-                    sysPerm === 'default' && systemAvailable
-                        ? h(
-                              'button',
-                              {
-                                  type: 'button',
-                                  className: 'wp-sf-add',
-                                  onClick: requestNotifyPermission,
-                              },
-                              t('notifyPermAsk')
-                          )
-                        : null,
-                ],
-            });
-
             var bodyContent = [
                 panel(t('secParams'), null, paramsContent),
-                panel(t('secBalance'), t('hintBalance'), balanceContent),
-                panel(t('secNotify'), t('hintNotify'), notifyContent),
                 panel(
                     t('secIntents'),
                     null,
@@ -7503,10 +7846,17 @@ window.__ModuleLoader__.load({
                     remoteAccount = undefined;
                 }
             }
+            var modelDirectories = null;
+            try {
+                modelDirectories = ctx.get('modelDirectories');
+            } catch (e) {
+                modelDirectories = null;
+            }
             var api = null;
             try {
                 api = resolveHostApi(connection, {
                     modern,
+                    modelDirectories,
                     sessions: ctx.get('sessions'),
                     remote: remoteSvc,
                     remoteSession,
