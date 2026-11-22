@@ -18,7 +18,7 @@
 
 </div>
 
-dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI 的开源鲸鱼桌宠插件。它会根据 Agent 的思考、编码、工具调用、等待和错误等状态自动切换动作，也支持点击回应、拖拽、屏幕漫游、自定义动画和触发规则。
+dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web UI 的开源大肥鱼桌宠插件。它会根据 Agent 的思考、编码、工具调用、等待和错误等状态自动切换动作，也支持点击回应、拖拽、屏幕漫游、自定义动画和触发规则。
 
 插件包含 **95 个 640×360 透明 WebM 动画**，界面覆盖 Harness 内置的全部 8 种语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português），设置修改后自动保存并热生效。
 
@@ -28,7 +28,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 
 <table>
   <tr>
-    <td align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/settings-overview.png" width="420" alt="鲸鱼桌宠设置界面"><br><strong>集中设置</strong></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/settings-overview.png" width="420" alt="大肥鱼桌宠设置界面"><br><strong>集中设置</strong></td>
     <td align="center"><img src="https://raw.githubusercontent.com/luweiyabo/dsh-whale-pet/main/docs/images/screenshots/action-browser.png" width="420" alt="分类浏览和预览动作"><br><strong>动作分类、搜索与预览</strong></td>
   </tr>
   <tr>
@@ -339,7 +339,7 @@ npm pack --dry-run
 
 ### 打开设置
 
-进入 **设置 → 插件 → 鲸鱼桌宠**（或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
+进入 **设置 → 插件 → 大肥鱼桌宠**（或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
 
 - 显示、文字气泡、余额显示与余额提醒（余额提醒只有一个开关；阈值、刷新间隔、API-key 授权、回合结束刷新和周/月额度阈值只能在配置文件手改）
 - 交互动效（光标倾斜跟随、点击弹跳、拖拽挤压）
@@ -475,7 +475,7 @@ $DSH_HOME/whale-pet/actions/
 <details>
 <summary><strong>安装后没有看到宠物</strong></summary>
 
-重新启动 `dsh web`，然后进入 **设置 → 插件 → 鲸鱼桌宠**，确认“显示宠物”已开启。也可以运行 `dsh --profile web --dump-config`，检查插件是否出现在组合配置中。
+重新启动 `dsh web`，然后进入 **设置 → 插件 → 大肥鱼桌宠**，确认“显示宠物”已开启。也可以运行 `dsh --profile web --dump-config`，检查插件是否出现在组合配置中。
 
 </details>
 

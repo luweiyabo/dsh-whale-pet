@@ -4167,7 +4167,7 @@ window.__ModuleLoader__.load({
                 var step = () => {
                     attempts += 1;
                     var dialog = document.querySelector('[role="dialog"]') || document;
-                    var petCard = findControlByText(dialog, [tPet('title'), '鲸鱼桌宠', 'Whale Pet'], true);
+                    var petCard = findControlByText(dialog, [tPet('title'), '大肥鱼桌宠', 'Whale Pet'], true);
                     if (petCard) {
                         if (petCard.getAttribute('aria-expanded') !== 'true') petCard.click();
                         if (petCard.scrollIntoView) petCard.scrollIntoView({ block: 'center' });
@@ -4711,7 +4711,7 @@ window.__ModuleLoader__.load({
         // ---- 国际化字典（locale 命名空间 'whale-pet'） ----
         var LOCALES = {
             zh: {
-                title: '鲸鱼桌宠',
+                title: '大肥鱼桌宠',
                 desc: '事件动作、自主行为与显示设置（修改后自动生效）',
                 secIntents: '事件动作映射',
                 secPools: '自主行为池',
