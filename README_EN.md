@@ -61,7 +61,7 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 | Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.3`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances still come from official provider endpoints; missing credentials produce a query failure (the last known balance is kept and labelled with its time).
+Plugin `0.2.0` keeps DSH `0.1.x` compatibility and adds support for DSH `0.2.0-rc.2` and `0.2.2-rc` (verified on `0.2.2-rc.3`; prerelease versions need an explicit range, see below): `0.1.x` keeps using `connection.api` / `connection.rpc`, while `0.2.0-rc.2` reads and writes settings through the typert Remote subservice `remote.settings`, takes session activity from `uiSession.sessionStatus`, normalizes model streaming from `assistant-stream` frames, and targets the official plugin-page slot `plugins.row.config` for its settings card. Session events, model selection, and pending approvals/questions behave the same on both hosts; restoring state after a reconnect does not fire rules for historical messages. Balances are layered by account / plan / API-key wallet: DeepSeek account needs no API key, plans do not query a wallet, and API-key wallets require explicit consent; failures keep the last known balance labelled with its time.
 
 **Platform note**: transparent WebM relies on VP9 alpha, which works in Chromium-based browsers and Firefox. Safari and every browser on iOS (all WebKit) render transparent video on a black box, so the pet switches to static frames automatically: actions still change, but there is no frame-by-frame motion.
 
@@ -157,7 +157,7 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 
 Open **Settings → Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
 
-- Visibility, text bubbles, and account-balance bubbles
+- Visibility, text bubbles, account balance, low-balance alerts, and API-key consent
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
 - Pet size, default corner, and session-awareness scope
 - Quiet, balanced, or lively autonomous activity
@@ -210,15 +210,31 @@ Debounce and linger intervals prevent rapid animation switching. User interactio
 - Shared priority arbitration with built-in intents
 - New `time` (`HH:MM`, local) and `dayOfWeek` (`0` = Sunday) conditions plus greater-than / less-than operators for work-hours and weekend rules
 
-### Account-balance bubble
+### Account balance and low-balance alerts
 
-When `meter` is enabled, the plugin detects the provider used by the current session and displays the balance returned by that provider's official API. It does not estimate token costs.
+Enable `meter` to show the balance and `balance.alert` to be notified below a threshold. Sources are chosen in this order, keeping API keys out of the way unless necessary:
 
-- Reads the current Harness model configuration, credential store, and provider default environment variables
-- Supports `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`, and `STEPFUN_API_KEY`, plus provider-specific `apiKeyEnv` settings
-- Sends a provider key only to that provider's allowlisted official endpoint, from the local host process
-- Disabled by default
-- Gracefully reports unsupported providers
+- **DeepSeek account** (signed in): uses the DSH account service `remote.account.getBalance`; no API key. The amount is recharge + bonus.
+- **Plans / subscriptions** (Kimi Coding, GLM Coding, Qwen / Xiaomi Token Plan, ChatGPT Codex, GitHub Copilot, etc.): reports "plan/subscription billing — no wallet balance" and never queries a wallet or a key.
+- **API-key wallets** (DeepSeek / Moonshot / StepFun): queried only after you explicitly enable "Allow API-key queries" in Settings. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed.
+
+Low-balance alerts:
+
+- Per-currency thresholds (CNY 20 / USD 3 by default); one alert per crossing, reset after topping up.
+- Reuses the turn-notification channels: system notification / chime / card, with a bubble while the page is focused.
+- Refresh interval `30s / 60s / 5min / off`; right-click "Refresh balance" queries immediately (3 s Host debounce).
+- Proxy: DSH reads `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at launch; the plugin uses plain `fetch` and never installs its own proxy. OS proxy settings are not read; SOCKS is unsupported; a TLS-intercepting proxy needs `NODE_EXTRA_CA_CERTS` before launch.
+- Disabled by default; token costs are not estimated. If an older profile already enabled `meter`, allow API-key queries once after upgrading (0.2.0 is unpublished, so there is no automatic migration).
+
+### Turn notifications
+
+Get notified when a turn finishes, fails, or waits for your approval/answer. When the page is hidden it uses system notifications; insecure contexts (LAN over HTTP) fall back to a chime plus a dot in the tab title.
+
+- Page focused: a bubble above the pet with a reaction animation; other sessions include their name, and clicking the bubble switches back
+- Page unfocused/minimized: system notification on Windows, macOS, and Linux (grant browser permission once on the Web; none needed in Desktop)
+- No system notification available: a short chime plus a `●` title marker, and the card is shown when you return
+- Settings page “Turn notifications”: five switches for completion, failure, needs-input, system notifications, and the chime
+- Background sessions are watched regardless of the activity scope, so switching away does not lose the completion
 
 ## Action configuration
 
@@ -278,7 +294,7 @@ Move the pointer to the screen edge where it disappeared. You can also enable it
 <details>
 <summary><strong>The balance bubble says unsupported or failed</strong></summary>
 
-Check whether the current model provider exposes a public balance API and whether the relevant Harness credential or environment variable is configured. Unsupported providers fall back safely.
+A plan/subscription provider showing “plan/subscription billing” is expected; an API-key wallet showing “needs permission” can be enabled under Settings → Account balance. For network/proxy errors, check `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` at DSH launch; a TLS-intercepting proxy also needs `NODE_EXTRA_CA_CERTS`.
 
 </details>
 

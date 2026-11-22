@@ -31,3 +31,13 @@ test('旧配置（无 posX/calendar）仍可通过校验并补默认值', () => 
     assert.equal(legacy.posX, -1);
     assert.equal(legacy.calendar.enabled, true);
 });
+
+test('通知开关默认开启，可单独关闭', () => {
+    const schema = buildSettingsSchema(z);
+    const defaults = schema({});
+    assert.deepEqual(defaults.notify, { done: true, error: true, waiting: true, system: true, sound: true });
+    const off = schema({ notify: { waiting: false, system: false } });
+    assert.equal(off.notify.waiting, false);
+    assert.equal(off.notify.system, false);
+    assert.equal(off.notify.done, true);
+});

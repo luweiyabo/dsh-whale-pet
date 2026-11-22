@@ -59,6 +59,44 @@ test('包含文字的动画始终不镜像', () => {
     assert.equal(animFacingTransform('coding', 'left'), '');
 });
 
+test('余额配置默认值与合并：坏类型回落、阈值逐币种覆盖', () => {
+    const base = mergeConfig();
+    assert.equal(base.balance.alert, false);
+    assert.equal(base.balance.allowApiKey, false);
+    assert.equal(base.balance.refreshMs, 60000);
+    assert.deepEqual(base.balance.thresholds, { CNY: 20, USD: 3 });
+
+    const merged = mergeConfig({
+        balance: {
+            alert: true,
+            allowApiKey: true,
+            refreshMs: 300000,
+            timeoutMs: 15000,
+            thresholds: { CNY: 5, USD: -1, EUR: 9 },
+        },
+    });
+    assert.equal(merged.balance.alert, true);
+    assert.equal(merged.balance.allowApiKey, true);
+    assert.equal(merged.balance.refreshMs, 300000);
+    assert.equal(merged.balance.timeoutMs, 15000);
+    assert.deepEqual(merged.balance.thresholds, { CNY: 5, USD: 3 });
+
+    const bad = mergeConfig({
+        balance: {
+            alert: 'yes',
+            allowApiKey: 1,
+            refreshMs: 12345,
+            timeoutMs: 1,
+            thresholds: 'nope',
+        },
+    });
+    assert.equal(bad.balance.alert, false);
+    assert.equal(bad.balance.allowApiKey, false);
+    assert.equal(bad.balance.refreshMs, 60000);
+    assert.equal(bad.balance.timeoutMs, 12000);
+    assert.deepEqual(bad.balance.thresholds, { CNY: 20, USD: 3 });
+});
+
 test('客户端意图默认值与宿主默认值一致', () => {
     assert.deepEqual(mergeConfig().intents, {
         working: ['eating_tokens'],
@@ -209,4 +247,13 @@ test('规则和错误保持时间为零时立即过期', async () => {
     assert.ok(states.some((state) => state[INTENT.ERROR] && state['rule:instant']));
     assert.equal(states.at(-1)[INTENT.ERROR], undefined);
     assert.equal(states.at(-1)['rule:instant'], undefined);
+});
+
+test('通知配置：默认五个开关开启，坏值回落默认', () => {
+    const defaults = mergeConfig(null).notify;
+    assert.deepEqual(defaults, { done: true, error: true, waiting: true, system: true, sound: true });
+    const merged = mergeConfig({ notify: { done: false, sound: 'nope', system: null } }).notify;
+    assert.equal(merged.done, false);
+    assert.equal(merged.sound, true);
+    assert.equal(merged.system, true);
 });

@@ -66,6 +66,27 @@ test('旧版 connection.api 保持原样返回', () => {
     assert.equal(resolveHostApi({ api: legacy, rpc: { call() {} } }), legacy);
 });
 
+test('remote.account 适配为 api.account.getBalance，缺失时不暴露', async () => {
+    const calls = [];
+    const account = {
+        getBalance(metadata) {
+            calls.push(metadata);
+            return Promise.resolve({ status: 'ready', value: [], bonusWallets: [] });
+        },
+    };
+    const api = resolveHostApi({ rpc: { call() {} } }, { remoteAccount: account });
+    const metadata = { version: '0.2.0', locale: 'zh', timezoneOffsetSeconds: 28800 };
+    assert.deepEqual(await api.account.getBalance(metadata), {
+        status: 'ready',
+        value: [],
+        bonusWallets: [],
+    });
+    assert.deepEqual(calls, [metadata]);
+
+    const without = resolveHostApi({ rpc: { call() {} } }, {});
+    assert.equal(without.account, undefined);
+});
+
 test('会话 follow 只恢复未结束回合，转发实时事件并在断线后重建快照', async () => {
     const list = observable({ current: 's1', ids: ['s1'], byId: { s1: { running: true } } });
     const pending = observable(new Map([['s1', { key: 'approval:1', kind: 'approval' }]]));

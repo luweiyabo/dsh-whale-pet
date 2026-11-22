@@ -56,7 +56,13 @@ function loadClient() {
     let cursor = 0;
     const state = [];
     const react = {
-        createElement: (type, props) => ({ type, props }),
+        createElement: (type, props, ...children) => ({
+            type,
+            props: {
+                ...(props || {}),
+                ...(children.length ? { children: children.length === 1 ? children[0] : children } : {}),
+            },
+        }),
         useEffect() {},
         useRef: (current) => ({ current }),
         useState(initial) {
@@ -109,6 +115,32 @@ for (const [label, api] of [
         assert.equal(client.render({ api }).open, false);
     });
 }
+
+test('余额设置分区与授权开关能在表单中渲染', () => {
+    const client = loadClient();
+    const form = client.plugin.__internals.SettingsForm({
+        draft: client.plugin.__internals.mergeConfig({
+            balance: { alert: true, allowApiKey: true },
+        }),
+        onPatch() {},
+        saving: false,
+        savedAt: 0,
+        error: null,
+        open: true,
+        onToggle() {},
+        unsaved: false,
+        custom: null,
+        ruleUi: null,
+        t: (key) => key,
+        bare: true,
+    });
+    const text = JSON.stringify(form);
+    assert.ok(text.includes('secBalance'));
+    assert.ok(text.includes('labelBalanceAlert'));
+    assert.ok(text.includes('labelAllowApiKey'));
+    assert.ok(text.includes('labelThresholdCny'));
+    assert.ok(text.includes('labelBalanceInterval'));
+});
 
 test('鲸鱼卡片在官方默认卡片之后，与注册先后无关', () => {
     for (const whaleFirst of [true, false]) {

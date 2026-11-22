@@ -61,7 +61,7 @@ function remoteSettingsAdapter(getSettings) {
 export function resolveHostApi(connection, services = {}) {
     if (connection?.api) return connection.api;
 
-    const { sessions, remote, uiSession, getSettings, modern } = services;
+    const { sessions, remote, remoteAccount, uiSession, getSettings, modern } = services;
 
     let call = null;
     let settings;
@@ -89,9 +89,25 @@ export function resolveHostApi(connection, services = {}) {
 
     // remote.session 子服务在 0.2.0 需按服务名取（ctx.get('remote.session')），
     // 直接读 remote.session 属性会被 cordis 的 inject 守卫拒绝。0.1.x 回落属性访问。
-    const remoteSession = services.remoteSession ?? (remote ? remote.session : undefined);
+    let remoteSession = services.remoteSession;
+    if (remoteSession === undefined && remote) {
+        try {
+            remoteSession = remote.session;
+        } catch {
+            remoteSession = undefined;
+        }
+    }
 
     const api = { settings };
+    // account 余额走 Remote（账户登录态），不经过 API-key 路由；
+    // 软获取失败时不暴露该方法，由宠物侧显示 account-unavailable。
+    if (remoteAccount && typeof remoteAccount.getBalance === 'function') {
+        api.account = {
+            getBalance(metadata) {
+                return remoteAccount.getBalance(metadata);
+            },
+        };
+    }
     if (sessions?.list && remoteSession) {
         api.sessionList = sessions.list;
         api.sessions = {
@@ -238,14 +254,19 @@ export function subscribeSessionActivity({ sessions, remote, remoteSession, uiSe
         // 0.1.2：list 快照含 current；0.2.0：list 不再含 current，改由 uiSession.current 提供。
         const currentId = list.current ?? uiSession?.current?.getSnapshot?.()?.key;
         const ids = new Set(currentId ? [currentId] : []);
-        if (options.scope !== 'current')
+        // watchAllRunning：完成提示要收到的后台会话事件不受 scope 限制。
+        // 只 follow「正在运行」的会话，idle 会话不订阅，避免无意义的历史拉取。
+        const watchAll = options.watchAllRunning === true;
+        if (options.scope !== 'current' || watchAll)
             for (const id of list.ids || []) {
                 if (runningOf(id, list)) ids.add(id);
             }
         for (const [id, watch] of watches)
             if (!ids.has(id)) {
                 // control 的 idle 可能先于 follow 的 turn/end 到达，留出收尾窗口。
-                if (options.scope === 'current' || !list.byId[id]) stopWatch(id, watch);
+                // watchAllRunning 时即使 scope=current 也不能立刻停掉后台会话——
+                // 那正是「切走会话后完成提示」依赖的事件来源。
+                if ((!watchAll && options.scope === 'current') || !list.byId[id]) stopWatch(id, watch);
                 else if (!watch.retireTimer) watch.retireTimer = setTimeout(() => stopWatch(id, watch), 4000);
             }
         for (const id of ids) {

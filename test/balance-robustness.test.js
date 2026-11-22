@@ -59,6 +59,66 @@ test('balanceDue 区分正常轮询与失败退避', () => {
     assert.equal(balanceDue({ at: now + 5000, failures: 0 }, now), false);
 });
 
+test('balanceDue 支持可配置间隔，失败退避不受影响', () => {
+    const now = 2_000_000;
+    assert.equal(balanceDue({ at: now - 59000, failures: 0 }, now, 60000), false);
+    assert.equal(balanceDue({ at: now - 61000, failures: 0 }, now, 60000), true);
+    assert.equal(balanceDue({ at: now - 4000, failures: 1 }, now, 60000), false, '失败仍走 5s 退避');
+    assert.equal(balanceDue({ at: now - 6000, failures: 1 }, now, 60000), true);
+});
+
+test('新来源状态有独立文案，不影响旧状态', () => {
+    const labels = {
+        balance: '余额 ',
+        waiting: '等待模型调用…',
+        unsupported: '当前服务商暂不支持',
+        failed: '查询失败',
+        stale: '（上次 {time}，刷新失败）',
+        consent: '需要授权使用 API key 查询',
+        signedOut: '未登录 DeepSeek 账户',
+        accountUnavailable: '当前 DSH 版本不支持账户余额',
+        plan: '套餐/订阅计费，不适用余额查询',
+        loading: '查询中…',
+    };
+    assert.equal(
+        formatMeterText({ status: 'plan', providerLabel: 'Kimi Coding' }, labels),
+        '余额 Kimi Coding · 套餐/订阅计费，不适用余额查询'
+    );
+    assert.equal(
+        formatMeterText({ status: 'consent-required', providerLabel: 'DeepSeek' }, labels),
+        '余额 DeepSeek · 需要授权使用 API key 查询'
+    );
+    assert.equal(
+        formatMeterText({ status: 'signed-out', providerLabel: null }, labels),
+        '余额 未登录 DeepSeek 账户'
+    );
+    assert.equal(
+        formatMeterText({ status: 'account-unavailable', providerLabel: 'DeepSeek 账户' }, labels),
+        '余额 DeepSeek 账户 · 当前 DSH 版本不支持账户余额'
+    );
+    assert.equal(formatMeterText({ status: 'loading', providerLabel: null }, labels), '余额 查询中…');
+    assert.equal(
+        formatMeterText(
+            { status: 'error', providerLabel: 'DeepSeek', balances: null, errorCode: 'network' },
+            { ...labels, errors: { network: '网络/代理不可达' } }
+        ),
+        '余额 DeepSeek · 网络/代理不可达'
+    );
+    assert.equal(
+        formatMeterText(
+            {
+                status: 'error',
+                providerLabel: 'DeepSeek',
+                balances: [{ currency: 'CNY', total: '10.00' }],
+                updatedAt: new Date(2026, 10, 21, 9, 41).getTime(),
+                errorCode: 'tls',
+            },
+            { ...labels, errors: { tls: '代理证书不受信任' } }
+        ),
+        '余额 DeepSeek · CNY 10.00 （上次 09:41，刷新失败）（代理证书不受信任）'
+    );
+});
+
 test('失败时保留上次余额并标注时间', () => {
     const clock = formatClock(new Date(2026, 10, 16, 9, 41, 0).getTime());
     assert.equal(clock, '09:41');

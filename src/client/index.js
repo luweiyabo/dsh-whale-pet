@@ -11,6 +11,38 @@ import {
     situationalPool,
     summarizeTurn,
 } from './schedule.js';
+import {
+    BALANCE_ALERT_STORAGE_KEY,
+    DEFAULT_BALANCE,
+    addDecimal,
+    decimalCompare,
+    evaluateBalanceAlerts,
+    formatBalanceAlert,
+    mergeWalletBalances,
+    normalizeDecimal,
+    readAlertStore,
+    setSourceState,
+    sourceKey,
+    sourceStateOf,
+    thresholdOf,
+    writeAlertStore,
+} from './balance-alert.js';
+import {
+    DEFAULT_NOTIFY,
+    NOTIFY_KINDS,
+    cardTtl,
+    channelDecision,
+    classifyTurnEnd,
+    createNotifierSound,
+    createSystemNotifier,
+    emptyNotifyQueue,
+    formatNotifyText,
+    notificationEnvironment,
+    notifyDecision,
+    notifyQueueReducer,
+    shortHash,
+    titleMark,
+} from './notify.js';
 
 /**
  * ============================================================================
@@ -173,11 +205,36 @@ window.__ModuleLoader__.load({
             '.wp-root[data-corner=top-right] .wp-bubble::after,.wp-root[data-corner=top-left] .wp-bubble::after{top:-9px;bottom:auto;box-shadow:-8px -9px 0 -2px var(--dsw-alias-bg-layer-3)}',
             // 常驻气泡（额度）：不播放淡出动画，始终保持可见
             '.wp-bubble-sticky{animation:none}',
+            // 可点击气泡（完成/待确认提示，点一下回到对应会话）：唯一可交互的气泡
+            '.wp-bubble-action{pointer-events:auto;cursor:pointer}',
+            // 通知气泡：停留 8 秒，悬停暂停（方便点中）
+            '.wp-bubble-notify{animation-duration:8s}',
+            '.wp-bubble-notify:hover{animation-play-state:paused}',
+            '.wp-bubble-action:hover{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:14px}',
+            '.wp-bubble-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:14px}',
             // ===== 右键菜单：fixed 定位浮层，独立于舞台可点击 =====
             '.wp-menu{position:fixed;z-index:45;pointer-events:auto;min-width:150px;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;display:flex;flex-direction:column}',
             '.wp-menuItem{appearance:none;font:inherit;cursor:pointer;text-align:left;background:0 0;border:0;border-radius:7px;padding:7px 12px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
             '.wp-menuItem:hover{background:var(--dsw-alias-bg-module-platform)}',
             '.wp-menuItem:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
+            // ===== 回合完成提示：右侧通知卡（fixed 于视口，独立于桌宠舞台） =====
+            '.wp-notify-stack{position:fixed;right:16px;z-index:46;display:flex;flex-direction:column-reverse;gap:8px;pointer-events:none}',
+            '.wp-notify-card{position:relative;box-sizing:border-box;width:320px;max-width:calc(100vw - 32px);display:flex;align-items:stretch;gap:8px;padding:12px 8px 12px 14px;border:1px solid var(--dsw-alias-border-l2);border-left-width:3px;border-radius:12px;background:var(--dsw-alias-bg-layer-3);box-shadow:0 8px 24px rgba(0,0,0,.18);pointer-events:auto;color:var(--dsw-alias-label-primary);animation:wpNotifyIn .22s cubic-bezier(.2,.8,.2,1)}',
+            '.wp-notify-done{border-left-color:var(--dsw-alias-brand-primary)}',
+            '.wp-notify-error{border-left-color:var(--dsw-alias-label-error)}',
+            '.wp-notify-waiting{border-left-color:#d99a2b}',
+            '.wp-notify-balance{border-left-color:#d99a2b}',
+            '.wp-notify-main{appearance:none;border:0;background:0 0;font:inherit;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:0;border-radius:6px}',
+            '.wp-notify-head{display:flex;align-items:baseline;gap:8px;min-width:0}',
+            '.wp-notify-kind{font-size:13px;font-weight:600;white-space:nowrap}',
+            '.wp-notify-session{font-size:12px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
+            '.wp-notify-meta{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}',
+            '.wp-notify-open{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+            '.wp-notify-close{appearance:none;border:0;background:0 0;color:var(--dsw-alias-label-tertiary);cursor:pointer;font-size:16px;line-height:1;padding:2px 8px;border-radius:6px;align-self:flex-start;flex:none}',
+            '.wp-notify-close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-module-platform)}',
+            '.wp-notify-main:focus-visible,.wp-notify-close:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+            '@keyframes wpNotifyIn{from{opacity:0;transform:translateX(calc(100% + 16px))}to{opacity:1;transform:translateX(0)}}',
+            '@media (prefers-reduced-motion: reduce){.wp-notify-card{animation:none}}',
             // ===== 自定义动作区：目录路径 + 刷新按钮 + 规格/计数提示 =====
             '.wp-sf-customDir{display:flex;align-items:center;gap:8px;min-width:0}',
             '.wp-sf-customPath{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
@@ -697,12 +754,13 @@ window.__ModuleLoader__.load({
          * - 上次成功过 → 按正常间隔
          * - 连续失败 → 按退避阶梯，避免把上游和宿主都打满
          */
-        function balanceDue(mb, now) {
+        function balanceDue(mb, now, intervalMs) {
             if (!mb || !Number.isFinite(mb.at) || mb.at <= 0) return true;
             var since = now - mb.at;
             if (since < 0) return false;
             if (mb.failures > 0) return since >= balanceRetryDelay(mb.failures);
-            return since >= BALANCE_FRESH_MS;
+            var fresh = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : BALANCE_FRESH_MS;
+            return since >= fresh;
         }
         /** 余额金额文案：US$ 12.34 · CNY 88.00 */
         function meterAmountText(balances) {
@@ -728,18 +786,50 @@ window.__ModuleLoader__.load({
             var head = labels.balance + (mb.providerLabel ? mb.providerLabel + ' · ' : '');
             if (mb.status === 'unsupported') return head + labels.unsupported;
             if (mb.status === 'waiting') return head + labels.waiting;
+            if (mb.status === 'loading') return head + (labels.loading || labels.waiting);
+            if (mb.status === 'consent-required') return head + (labels.consent || labels.failed);
+            if (mb.status === 'signed-out') return head + (labels.signedOut || labels.failed);
+            if (mb.status === 'account-unavailable')
+                return head + (labels.accountUnavailable || labels.failed);
+            if (mb.status === 'plan') return head + (labels.plan || labels.unsupported);
+            var reason = labels.errors && mb.errorCode ? labels.errors[mb.errorCode] : '';
             var amount = meterAmountText(mb.balances);
-            if (!amount) return head + labels.failed;
+            if (!amount) return head + (reason || labels.failed);
             var text = head + amount;
             if (mb.status === 'error') {
                 var clock = formatClock(mb.updatedAt);
-                text += ' ' + (clock ? labels.stale.replace('{time}', clock) : labels.failed);
+                var suffix = clock ? labels.stale.replace('{time}', clock) : reason || labels.failed;
+                if (clock && reason) suffix += '（' + reason + '）';
+                text += ' ' + suffix;
             }
             return text;
+        }
+        // 诊断开关：默认关闭（宿主端 /whale-pet/api/debug 已移除，开启前需先恢复该路由）
+        var WP_DEBUG = false;
+        // 临时诊断：把通知链路的关键判定异步写到宿主日志（排查完删除）
+        function postDebug(payload) {
+            if (!WP_DEBUG) return;
+            try {
+                fetch('/whale-pet/api/debug', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }).catch(function () {});
+            } catch (e) {
+                /* 诊断失败不影响主流程 */
+            }
         }
         // 页面是否可见（把 document 访问收敛到一处，SSR/无 DOM 环境安全）
         function pageVisible() {
             return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+        }
+        // 窗口是否聚焦（"切到其他软件"的主信号；Electron 最小化时同样为 false）
+        function pageFocused() {
+            try {
+                return typeof document === 'undefined' || document.hasFocus();
+            } catch (e) {
+                return true;
+            }
         }
         // 可见性 hook：隐藏时暂停视频与余额轮询，恢复时继续
         function useDocumentVisible() {
@@ -997,6 +1087,9 @@ window.__ModuleLoader__.load({
         };
         // 旧版"安静"预设误带 10% 自主移动概率，迁移时把该份额还给动作池
         var LEGACY_QUIET_BEHAVIOR = { idleProb: 0.55, turnProb: 0.1, actProb: 0.25, moveProb: 0.1 };
+        // 账户余额 Remote 的 client version：Platform 只作为 x-client-version 记录，
+        // 不参与余额语义；发版时随 package.json 更新。
+        var PLUGIN_CLIENT_VERSION = '0.2.0';
         var DEFAULT_CONFIG = {
             visible: true,
             bubbles: true,
@@ -1010,6 +1103,13 @@ window.__ModuleLoader__.load({
             posY: -1,
             // 日历感知：节日/季节动画只在应景时间出现在随机动作池（可关）
             calendar: { enabled: true, festival: true, seasonal: true },
+            // 回合完成提示：三个事件开关 + 系统通知/提示音两条通道
+            notify: { ...DEFAULT_NOTIFY },
+            // 余额提示：来源分层 + 阈值 + API-key 授权
+            balance: {
+                ...DEFAULT_BALANCE,
+                thresholds: { ...DEFAULT_BALANCE.thresholds },
+            },
             behavior: {
                 ...ACTIVITY_PRESETS.balanced,
                 debounceMs: 500,
@@ -1051,6 +1151,31 @@ window.__ModuleLoader__.load({
                 for (var calKey in c.calendar) {
                     if (typeof user.calendar[calKey] === 'boolean')
                         c.calendar[calKey] = user.calendar[calKey];
+                }
+            }
+            if (user.notify && typeof user.notify === 'object') {
+                for (var notiKey in c.notify) {
+                    if (typeof user.notify[notiKey] === 'boolean') c.notify[notiKey] = user.notify[notiKey];
+                }
+            }
+            if (user.balance && typeof user.balance === 'object') {
+                if (typeof user.balance.alert === 'boolean') c.balance.alert = user.balance.alert;
+                if (typeof user.balance.allowApiKey === 'boolean')
+                    c.balance.allowApiKey = user.balance.allowApiKey;
+                if ([30000, 60000, 300000, 0].indexOf(user.balance.refreshMs) !== -1)
+                    c.balance.refreshMs = user.balance.refreshMs;
+                if (
+                    typeof user.balance.timeoutMs === 'number' &&
+                    user.balance.timeoutMs >= 3000 &&
+                    user.balance.timeoutMs <= 60000
+                )
+                    c.balance.timeoutMs = user.balance.timeoutMs;
+                if (user.balance.thresholds && typeof user.balance.thresholds === 'object') {
+                    for (var thresholdKey of ['CNY', 'USD']) {
+                        var threshold = user.balance.thresholds[thresholdKey];
+                        if (typeof threshold === 'number' && threshold >= 0 && threshold <= 1e9)
+                            c.balance.thresholds[thresholdKey] = threshold;
+                    }
                 }
             }
             if (user.behavior && typeof user.behavior === 'object') {
@@ -1229,7 +1354,83 @@ window.__ModuleLoader__.load({
         // config：来自 patch 配置（兜底）。api：connection 服务的 api 对象（事件感知；
         // 缺失时退化为纯自主链桌宠）。store：设置配置存储（null = 走代码默认）。
         // customStore：自定义动作存储（null = 不支持自定义动作）。
-        function WhalePet({ config, api, store, locale, customStore, ruleRuntime, layout, useSessions }) {
+        // ============================================================================
+        // 回合完成提示：卡片组件（页面可见时的通道）
+        // ============================================================================
+        // 单张卡片：悬停暂停自动消失；点击主体打开会话，右上角 × 只关闭。
+        // 同一时刻最多 3 张（队列上限在 WhalePet 的 reducer 里控制）。
+        function NotifyCard({ card, t, onDismiss, onOpen }) {
+            var [hovered, setHovered] = useState(false);
+            useEffect(() => {
+                // 待确认卡片不自动消失：要留到用户处理或手动关闭
+                if (hovered || card.kind === 'waiting') return;
+                var timer = setTimeout(() => onDismiss(card.id), cardTtl(card.kind));
+                return () => clearTimeout(timer);
+            }, [card.id, card.kind, hovered, onDismiss]);
+            return h('div', {
+                className: 'wp-notify-card wp-notify-' + card.kind,
+                role: card.kind === 'error' ? 'alert' : 'status',
+                onMouseEnter: () => setHovered(true),
+                onMouseLeave: () => setHovered(false),
+                children: [
+                    h('button', {
+                        type: 'button',
+                        className: 'wp-notify-main',
+                        onClick: () => onOpen(card),
+                        children: [
+                            h('span', {
+                                className: 'wp-notify-head',
+                                children: [
+                                    h('span', { className: 'wp-notify-kind' }, card.title),
+                                    card.session &&
+                                        h('span', { className: 'wp-notify-session' }, card.session),
+                                ],
+                            }),
+                            card.meta && h('span', { className: 'wp-notify-meta' }, card.meta),
+                            h('span', { className: 'wp-notify-open' }, card.actionLabel || t('notifyOpen')),
+                        ],
+                    }),
+                    h('button', {
+                        type: 'button',
+                        className: 'wp-notify-close',
+                        'aria-label': t('notifyDismiss'),
+                        onClick: () => onDismiss(card.id),
+                        children: '×',
+                    }),
+                ],
+            });
+        }
+        // 通知栈：固定右侧、向上堆叠；bottom 由桌宠占位决定
+        function NotifyStack({ cards, t, onDismiss, onOpen, bottom }) {
+            var shown = (cards || []).filter((card) => card.status === 'shown');
+            if (!shown.length) return null;
+            return h('div', {
+                className: 'wp-notify-stack',
+                style: { bottom: bottom + 'px' },
+                children: shown.map((card) =>
+                    h(NotifyCard, {
+                        key: card.id,
+                        card: card,
+                        t: t,
+                        onDismiss: onDismiss,
+                        onOpen: onOpen,
+                    })
+                ),
+            });
+        }
+
+        function WhalePet({
+            config,
+            api,
+            store,
+            locale,
+            customStore,
+            ruleRuntime,
+            layout,
+            useSessions,
+            uiWorkspace,
+            openSession,
+        }) {
             // ---- 设置配置：订阅配置存储，热生效 ----
             // cfg = 完整合并配置（默认值+用户值）；未加载成功前为 null（走代码默认）
             var [cfg, setCfg] = useState(store ? store.get() : null);
@@ -1275,6 +1476,9 @@ window.__ModuleLoader__.load({
             // 仲裁/感知参数引用（渲染时同步，effect 内动态读取 → 保存即生效不重建流）
             var arbOptsRef = useRef({ debounceMs: 500, lingerMs: 1500, errorHoldMs: 3000, ruleMeta: {} });
             var bNow = (cfg && cfg.behavior) || DEFAULT_CONFIG.behavior;
+            // 任一事件开关打开就要在后台会话上保持 watch（完成提示的数据来源）
+            var notifyCfgNow = (cfg && cfg.notify) || DEFAULT_NOTIFY;
+            var notifyActive = !!(notifyCfgNow.done || notifyCfgNow.error || notifyCfgNow.waiting);
             arbOptsRef.current.debounceMs = bNow.debounceMs;
             arbOptsRef.current.lingerMs = bNow.lingerMs;
             arbOptsRef.current.errorHoldMs = bNow.errorHoldMs;
@@ -1350,6 +1554,11 @@ window.__ModuleLoader__.load({
             var [playing, setPlaying] = useState({ anim: IDLE, once: true, seq: 0 });
             // 文字气泡：{ text, seq }；seq 用于同文案重复触发时强制重建动画
             var [bubble, setBubble] = useState(null);
+            var [bubbleHovered, setBubbleHovered] = useState(false);
+            // 最近一次完成/待确认提示：右键菜单提供「回到该会话」的可靠入口
+            var lastNotifyRef = useRef(null);
+            // 待确认通知去重：宿主可能同时投递别名帧与状态帧，同会话 15s 内只提示一次
+            var waitingNotifyRef = useRef(new Map());
             var [facing, setFacing] = useState('left'); // 朝向：left | right
             var [dragging, setDragging] = useState(false); // 是否正在拖拽
             // 选中态（左键单击宠物进入"目标移动"模式：再点屏幕让宠物走过去）
@@ -1431,28 +1640,324 @@ window.__ModuleLoader__.load({
                 if (!text || (c && c.bubbles === false)) return;
                 setBubble({ text: text, seq: Date.now(), sticky: false });
             }, []);
+            // 提示气泡：带上会话 id 后变成可点击（点一下切回该会话）；waiting 用 sticky
+            var showNotifyBubble = useCallback((text, sessionId, sticky) => {
+                var c = cfgRef.current;
+                if (!text || (c && c.bubbles === false)) return;
+                setBubble({
+                    text: text,
+                    seq: Date.now(),
+                    sticky: !!sticky,
+                    ttl: sticky ? 0 : 8000,
+                    sessionId: sessionId || null,
+                });
+            }, []);
             // 余额气泡只展示服务商官方接口返回的金额，不进行本地费用估算。
             // 金额保持字符串形式，避免浮点转换造成精度损失。
             var currentModelRef = useRef({ route: null, model: null });
             var meterBalanceRef = useRef({
                 at: 0,
                 status: 'waiting',
+                source: null,
+                provider: null,
                 providerLabel: null,
+                planKind: null,
                 balances: null,
                 failures: 0,
                 updatedAt: 0,
+                errorCode: null,
+                requiresConsent: false,
+                proxyEnv: null,
+                metaKey: '',
+                metaAt: 0,
+                metaConsent: null,
             });
-            // 当前回合统计：{ startedAt, endedAt, tools, usage, last }
-            // usage 来自感知层 onUsage（真实 token），tools 来自 onToolCall，用于
-            // 右键「本轮统计」气泡；也是后续"完成提示"的数据源。
-            var turnStatsRef = useRef({
-                startedAt: 0,
-                endedAt: 0,
-                tools: 0,
-                usage: emptyUsage(),
-                last: null,
-            });
-            // 已预取过模型选择的会话 id（避免每次渲染/切换重复调 session.models）
+            // 余额提醒状态：localStorage 只存 below/at，不存金额；仅 leader 写。
+            var balanceStorageRef = useRef(null);
+            if (!balanceStorageRef.current) {
+                try {
+                    balanceStorageRef.current = typeof window !== 'undefined' ? window.localStorage : null;
+                } catch (e) {
+                    balanceStorageRef.current = null;
+                }
+            }
+            var balanceAlertRef = useRef(null);
+            if (!balanceAlertRef.current) {
+                balanceAlertRef.current = readAlertStore(balanceStorageRef.current);
+            }
+            // ---- 每会话回合统计 ----
+            // { startedAt, endedAt, tools, usage, last }，按 sessionId 分开记。
+            // 多会话（scope=any / 完成提示）并行回合必须各记各的，否则数字互相污染。
+            var turnStatsBySession = useRef(new Map());
+            var statsOf = (sessionId) => {
+                var map = turnStatsBySession.current;
+                var key = sessionId || '';
+                var st = map.get(key);
+                if (!st) {
+                    st = { startedAt: 0, endedAt: 0, tools: 0, usage: emptyUsage(), last: null };
+                    map.set(key, st);
+                    if (map.size > 20) map.delete(map.keys().next().value); // LRU 粗淘汰
+                }
+                return st;
+            };
+
+            // ---- 回合完成提示 ----
+            // 通道：系统通知 / 提示音 / 页内卡片；标题 `●` 为兜底（见 notify.js）。
+            var notifierRef = useRef(null);
+            if (!notifierRef.current) notifierRef.current = createSystemNotifier();
+            var notifySoundRef = useRef(null);
+            if (!notifySoundRef.current) notifySoundRef.current = createNotifierSound();
+            var [notifyCards, setNotifyCards] = useState(() => emptyNotifyQueue());
+            var [, setNotifyPermTick] = useState(0); // 权限可能在别处变更：回前台时强制重渲染
+            var tPetRef = useRef(tPet);
+            tPetRef.current = tPet;
+            var notifyTitleRef = useRef({ base: '', count: 0 });
+            // 会话标题：从会话列表快照取（displayTitle 是官方的展示名）
+            var sessionTitleOf = (sessionId) => {
+                if (!sessionId) return '';
+                try {
+                    var list =
+                        api && api.sessionList && api.sessionList.getSnapshot
+                            ? api.sessionList.getSnapshot()
+                            : null;
+                    var row = list && list.byId ? list.byId[sessionId] : null;
+                    if (row) return row.displayTitle || row.title || '';
+                } catch (e) {
+                    /* 列表未就绪：标题留空 */
+                }
+                return '';
+            };
+            var openNotifySession = useCallback(
+                (sessionId) => {
+                    if (!sessionId) {
+                        postDebug({ event: 'open', ok: false, result: 'no-id' });
+                        return;
+                    }
+                    var result = 'none';
+                    if (typeof openSession === 'function') {
+                        try {
+                            result = openSession(sessionId) || 'undefined';
+                        } catch (e) {
+                            result = 'throw:' + ((e && e.message) || e);
+                        }
+                    }
+                    if (result !== 'ok') {
+                        try {
+                            var ws = uiWorkspace;
+                            if (ws && typeof ws.openSession === 'function') {
+                                ws.openSession(sessionId);
+                                result = 'ws-ok';
+                            } else if (result === 'none') result = 'no-service';
+                        } catch (e) {
+                            result = 'ws-throw:' + ((e && e.message) || e);
+                        }
+                    }
+                    postDebug({
+                        event: 'open',
+                        ok: result === 'ok' || result === 'ws-ok',
+                        result: String(result),
+                        sessionId: String(sessionId).slice(0, 24),
+                    });
+                },
+                [uiWorkspace, openSession]
+            );
+            var bumpNotifyTitle = useCallback(() => {
+                if (!isLeader) return;
+                var ref = notifyTitleRef.current;
+                if (!ref.base) {
+                    try {
+                        ref.base = document.title;
+                    } catch (e) {
+                        return;
+                    }
+                }
+                ref.count += 1;
+                try {
+                    document.title = titleMark(ref.count) + ' ' + ref.base;
+                } catch (e) {
+                    /* 无 document（SSR）：忽略 */
+                }
+            }, [isLeader]);
+            var resetNotifyTitle = useCallback(() => {
+                var ref = notifyTitleRef.current;
+                if (!ref.base) return;
+                try {
+                    if (document.title.indexOf('●') === 0) document.title = ref.base;
+                } catch (e) {
+                    /* 忽略 */
+                }
+                ref.base = '';
+                ref.count = 0;
+            }, []);
+            // 一条回合事件 → 判定通道并派发。所有输入显式取当前值（ref），
+            // 因此可以在感知层 effect 的长期闭包里安全调用。
+            var enqueueNotify = useCallback(
+                (entry) => {
+                    if (!entry || NOTIFY_KINDS.indexOf(entry.kind) === -1) return;
+                    if (entry.kind === 'waiting' && entry.sessionId) {
+                        var lastWait = waitingNotifyRef.current.get(entry.sessionId);
+                        if (lastWait !== undefined && Date.now() - lastWait < 15000) return;
+                        waitingNotifyRef.current.set(entry.sessionId, Date.now());
+                    }
+                    var cfgNow = cfgRef.current || DEFAULT_CONFIG;
+                    var notifyCfg = cfgNow.notify || DEFAULT_NOTIFY;
+                    var notifier = notifierRef.current;
+                    var decision = notifyDecision({
+                        kind: entry.kind,
+                        notify: notifyCfg,
+                        visible: pageVisible(),
+                        focused: pageFocused(),
+                        sessionId: entry.sessionId,
+                        currentSessionId: currentSessionRef.current,
+                        secure: notifier.secureContext(),
+                        supported: notifier.supported(),
+                        permission: notifier.permission(),
+                    });
+                    postDebug({
+                        event: 'notify',
+                        kind: entry.kind,
+                        channel: decision.channel,
+                        perm: notifier.permission(),
+                        secure: notifier.secureContext(),
+                        supported: notifier.supported(),
+                        visible: pageVisible(),
+                        focused: pageFocused(),
+                        sameSession: entry.sessionId === currentSessionRef.current,
+                        sessionId: entry.sessionId,
+                    });
+                    if (decision.channel === 'none' && !decision.title && !decision.card) return;
+                    var text = formatNotifyText(entry, tPetRef.current);
+                    var sessionName = sessionTitleOf(entry.sessionId);
+                    var visibleNow = pageVisible() && pageFocused();
+                    var chime = () => {
+                        if (notifyCfg.sound === false) return;
+                        notifySoundRef.current.prime();
+                        postDebug({ event: 'chime', ok: notifySoundRef.current.play() });
+                    };
+                    // 页面不可见：系统通知是主通道；不管是否送达都补一声提示音
+                    if (decision.channel === 'system') {
+                        postDebug({
+                            event: 'sys-payload',
+                            title: (sessionName ? text.title + ' · ' + sessionName : text.title).slice(
+                                0,
+                                120
+                            ),
+                            body: String(text.body || '').slice(0, 120),
+                            tag: 'whale-pet:' + entry.kind + ':' + (entry.sessionId || ''),
+                        });
+                        var sent = notifier.send({
+                            title: sessionName ? text.title + ' · ' + sessionName : text.title,
+                            body: text.body,
+                            icon: '/whale-pet/poster/icon.png',
+                            // Windows toast 的 Tag 上限很短（16 字符），长 tag 会被静默丢弃；
+                            // 去重已由 seq 逻辑负责，这里只用短且唯一的 tag。
+                            tag:
+                                entry.kind === 'waiting'
+                                    ? 'wp-wait-' + shortHash(entry.sessionId || '')
+                                    : 'wp-' +
+                                      entry.kind +
+                                      '-' +
+                                      String(entry.seq === undefined ? Date.now() : entry.seq).slice(-8),
+                            requireInteraction: entry.kind === 'waiting',
+                            onClick: () => {
+                                // Electron 不保证置顶，尽力而为；浏览器会自己聚焦标签
+                                try {
+                                    window.focus();
+                                } catch (e) {
+                                    /* 忽略 */
+                                }
+                                openNotifySession(entry.sessionId);
+                            },
+                        });
+                        postDebug({ event: 'sys-send', ok: sent, kind: entry.kind });
+                        chime();
+                        if (sent) return;
+                    }
+                    // 系统通知不可用（未授权/非安全上下文/被限流）：安静兜底为标题 + 声音
+                    if (decision.channel === 'sound') {
+                        chime();
+                        if (decision.title) bumpNotifyTitle();
+                        return;
+                    }
+                    // 页内通道：桌宠上方气泡，与桌宠联动；带会话名，点一下切回该会话
+                    var label = text.title;
+                    if (sessionName && entry.sessionId !== currentSessionRef.current)
+                        label += ' · ' + sessionName;
+                    var msg = text.body ? label + ' · ' + text.body : label;
+                    lastNotifyRef.current = {
+                        sessionId: entry.sessionId || null,
+                        name: sessionName || '',
+                        at: Date.now(),
+                    };
+                    if (entry.sessionId) msg += ' · ' + tPetRef.current('notifyBubbleHint');
+                    // 当前会话且正看着：只出气泡不响；其他情况都补一声
+                    if (entry.kind !== 'done' || !visibleNow || entry.sessionId !== currentSessionRef.current)
+                        chime();
+                    showNotifyBubble(msg, entry.sessionId, entry.kind === 'waiting');
+                    if (!visibleNow) bumpNotifyTitle();
+                    if (!dragRef.current.active && !hideRef.current.active) {
+                        playNext(
+                            entry.kind === 'error'
+                                ? 'jump_scare'
+                                : entry.kind === 'waiting'
+                                  ? 'looking_around'
+                                  : 'cheerful_wave',
+                            true
+                        );
+                    }
+                },
+                [showNotifyBubble, bumpNotifyTitle, openNotifySession, playNext]
+            );
+            var dismissNotify = useCallback(
+                (id) => setNotifyCards((q) => notifyQueueReducer(q, { type: 'dismiss', id: id })),
+                []
+            );
+            var openNotifyCard = useCallback(
+                (card) => {
+                    if (!card) return;
+                    setNotifyCards((q) => notifyQueueReducer(q, { type: 'dismiss', id: card.id }));
+                    if (card.kind === 'balance') {
+                        showMeterBubble();
+                        return;
+                    }
+                    openNotifySession(card.sessionId);
+                },
+                [openNotifySession]
+            );
+            // 用户第一次指针操作时创建/恢复 AudioContext（浏览器自动播放限制）
+            useEffect(() => {
+                if (typeof window === 'undefined') return;
+                postDebug({ event: 'boot', notify: true, v: 4 });
+                var prime = () => {
+                    if (notifySoundRef.current) notifySoundRef.current.prime();
+                };
+                window.addEventListener('pointerdown', prime, { once: true, passive: true });
+                return () => window.removeEventListener('pointerdown', prime);
+            }, []);
+            // 回到前台：把排队卡片补显 + 还原标题；权限可能在别处被改动，重读一次
+            useEffect(() => {
+                if (!isLeader || typeof document === 'undefined') return;
+                var sync = () => {
+                    if (pageVisible() && pageFocused()) {
+                        setNotifyCards((q) => notifyQueueReducer(q, { type: 'promote' }));
+                        resetNotifyTitle();
+                        setNotifyPermTick((n) => n + 1);
+                    }
+                };
+                document.addEventListener('visibilitychange', sync);
+                window.addEventListener('focus', sync);
+                window.addEventListener('blur', sync);
+                return () => {
+                    document.removeEventListener('visibilitychange', sync);
+                    window.removeEventListener('focus', sync);
+                    window.removeEventListener('blur', sync);
+                };
+            }, [isLeader, resetNotifyTitle]);
+            // ---- 余额提示：来源判定、拉取、阈值提醒 ----
+            var balanceEnabled = useCallback(() => {
+                var c = cfgRef.current;
+                return !!(c && (c.meter || (c.balance && c.balance.alert)));
+            }, []);
             var showMeterBubble = useCallback(() => {
                 var c = cfgRef.current;
                 if (!c || c.meter === false) return;
@@ -1462,59 +1967,382 @@ window.__ModuleLoader__.load({
                     unsupported: tPet('meterUnsupported'),
                     failed: tPet('meterFailed'),
                     stale: tPet('meterStale'),
+                    consent: tPet('meterConsent'),
+                    signedOut: tPet('meterSignedOut'),
+                    accountUnavailable: tPet('meterAccountUnavailable'),
+                    plan: tPet('meterPlan'),
+                    loading: tPet('meterLoading'),
+                    errors: {
+                        network: tPet('meterErrorNetwork'),
+                        timeout: tPet('meterErrorTimeout'),
+                        tls: tPet('meterErrorTls'),
+                        auth: tPet('meterErrorAuth'),
+                        account: tPet('meterErrorAccount'),
+                        protocol: tPet('meterErrorProtocol'),
+                        upstream: tPet('meterErrorUpstream'),
+                        'missing-key': tPet('meterErrorMissingKey'),
+                    },
                 });
                 // 常驻气泡：sticky=true，不自动消失
                 setBubble({ text: text, seq: Date.now(), sticky: true });
             }, []);
-            // 余额节流拉取（30s，与宿主侧缓存一致；失败 5s 后允许重试）：
-            // meter 开启、token 用量累计（余额随消耗变化）时触发，避免
-            // 一次性预取失败后气泡永远停在占位符
-            var refreshBalance = useCallback(() => {
-                // 后台标签页不查余额（回到前台由可见性 effect 补一次）
-                if (!pageVisible()) return;
-                var mb = meterBalanceRef.current;
-                var target = currentModelRef.current;
-                if (!target.route) return;
-                var now = Date.now();
-                if (!balanceDue(mb, now)) return;
-                mb.at = now;
-                var query =
-                    '?route=' +
-                    encodeURIComponent(target.route) +
-                    '&model=' +
-                    encodeURIComponent(target.model || '');
-                fetch('/whale-pet/api/balance' + query)
-                    .then((r) => r.json())
-                    .then((d) => {
-                        if (meterBalanceRef.current !== mb) return;
-                        if (d && d.ok && Array.isArray(d.balances) && d.balances.length) {
-                            mb.status = 'ready';
+            var persistBalanceAlert = useCallback(
+                (key, nextState) => {
+                    var next = setSourceState(balanceAlertRef.current, key, nextState);
+                    balanceAlertRef.current = next;
+                    if (isLeader) writeAlertStore(balanceStorageRef.current, next);
+                },
+                [isLeader]
+            );
+            // 余额提醒：与回合提示共用通道，但 sessionScoped=false（余额是全局信息）。
+            var dispatchBalanceAlert = useCallback(
+                (mb, alerts) => {
+                    if (!alerts || !alerts.length) return;
+                    var cfgNow = cfgRef.current || DEFAULT_CONFIG;
+                    var notifyCfg = cfgNow.notify || DEFAULT_NOTIFY;
+                    var notifier = notifierRef.current;
+                    var text = formatBalanceAlert(alerts, mb.providerLabel, tPetRef.current);
+                    var tag =
+                        'whale-pet:balance:' +
+                        String(mb.source || 'unknown') +
+                        ':' +
+                        String(mb.provider || '');
+                    var id = tag;
+                    var decision = channelDecision({
+                        notify: notifyCfg,
+                        visible: pageVisible(),
+                        focused: pageFocused(),
+                        sessionScoped: false,
+                        secure: notifier.secureContext(),
+                        supported: notifier.supported(),
+                        permission: notifier.permission(),
+                    });
+                    var openBalance = () => {
+                        try {
+                            window.focus();
+                        } catch (e) {
+                            /* 忽略 */
+                        }
+                        if (cfgRef.current && cfgRef.current.meter) showMeterBubble();
+                        else showBubble(text.title + ' · ' + text.body);
+                    };
+                    if (decision.channel === 'system') {
+                        postDebug({
+                            event: 'sys-payload',
+                            title: (sessionName ? text.title + ' · ' + sessionName : text.title).slice(
+                                0,
+                                120
+                            ),
+                            body: String(text.body || '').slice(0, 120),
+                            tag: 'whale-pet:' + entry.kind + ':' + (entry.sessionId || ''),
+                        });
+                        var sent = notifier.send({
+                            title: text.title,
+                            body: text.body,
+                            icon: '/whale-pet/poster/idle.png',
+                            tag: tag,
+                            requireInteraction: false,
+                            onClick: openBalance,
+                        });
+                        if (sent) return;
+                        decision =
+                            notifyCfg.sound !== false
+                                ? { channel: 'sound', title: true, card: false }
+                                : { channel: 'none', title: true, card: true };
+                    }
+                    if (decision.channel === 'sound') {
+                        notifySoundRef.current.prime();
+                        notifySoundRef.current.play();
+                        if (decision.title) bumpNotifyTitle();
+                        return;
+                    }
+                    if (decision.channel === 'bubble') {
+                        setBubble({
+                            text: text.title + ' · ' + text.body,
+                            seq: Date.now(),
+                            sticky: !!(cfgRef.current && cfgRef.current.meter),
+                        });
+                        return;
+                    }
+                    if (decision.card || decision.channel === 'card') {
+                        setNotifyCards((q) =>
+                            notifyQueueReducer(q, {
+                                type: 'enqueue',
+                                card: {
+                                    id: id,
+                                    kind: 'balance',
+                                    sessionId: null,
+                                    title: text.title,
+                                    session: mb.providerLabel,
+                                    meta: text.body,
+                                    actionLabel: tPetRef.current('balanceView'),
+                                },
+                                status: pageVisible() ? 'shown' : 'queued',
+                            })
+                        );
+                        if (decision.title) bumpNotifyTitle();
+                    }
+                },
+                [showMeterBubble, bumpNotifyTitle]
+            );
+            var applyBalanceReady = useCallback(
+                (mb, balances, now) => {
+                    mb.status = 'ready';
+                    mb.failures = 0;
+                    mb.balances = balances;
+                    mb.updatedAt = now;
+                    mb.errorCode = null;
+                    showMeterBubble();
+                    var cfgNow = cfgRef.current || DEFAULT_CONFIG;
+                    if (!(cfgNow.balance && cfgNow.balance.alert)) return;
+                    var key = sourceKey(mb.source, mb.provider);
+                    var result = evaluateBalanceAlerts({
+                        state: sourceStateOf(balanceAlertRef.current, key),
+                        balances: balances,
+                        thresholds: cfgNow.balance.thresholds,
+                        now: now,
+                    });
+                    if (result.changed) persistBalanceAlert(key, result.state);
+                    if (result.alerts.length) dispatchBalanceAlert(mb, result.alerts);
+                },
+                [showMeterBubble, persistBalanceAlert, dispatchBalanceAlert]
+            );
+            var balanceErrorCodeOf = (error) => {
+                var e = error || {};
+                if (e.name === 'TimeoutError' || e.name === 'AbortError') return 'timeout';
+                var code = String(e.code || (e.cause && e.cause.code) || '').toUpperCase();
+                if (/CERT|TLS|SSL/.test(code)) return 'tls';
+                if (/ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|UND_ERR/.test(code)) return 'network';
+                return 'protocol';
+            };
+            // 余额节流拉取：先 meta 分类，再按来源走 account/wallet；plan/未授权不查。
+            var refreshBalance = useCallback(
+                (opts) => {
+                    var options = opts || {};
+                    var c = cfgRef.current || DEFAULT_CONFIG;
+                    if (!balanceEnabled()) return;
+                    if (!options.force && c.balance && c.balance.refreshMs === 0) return;
+                    if (!pageVisible() && !(c.balance && c.balance.alert)) return;
+                    var mb = meterBalanceRef.current;
+                    var target = currentModelRef.current;
+                    if (!target.route) return;
+                    var now = Date.now();
+                    var interval = pageVisible()
+                        ? c.balance.refreshMs || 60000
+                        : Math.max(c.balance.refreshMs || 60000, 300000);
+                    if (!options.force && !balanceDue(mb, now, interval)) return;
+                    mb.at = now;
+                    var seq = (mb.seq || 0) + 1;
+                    mb.seq = seq;
+                    var queryBase =
+                        '?route=' +
+                        encodeURIComponent(target.route) +
+                        '&model=' +
+                        encodeURIComponent(target.model || '');
+                    var accountLabel = () => tPetRef.current('balanceAccountLabel');
+                    var runData = () => {
+                        var url = '/whale-pet/api/balance' + queryBase + (options.force ? '&force=1' : '');
+                        fetch(url)
+                            .then((r) => r.json())
+                            .then((d) => {
+                                if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                                if (d && d.ok && Array.isArray(d.balances) && d.balances.length) {
+                                    mb.source = 'wallet';
+                                    mb.provider = d.provider || mb.provider;
+                                    mb.providerLabel = d.providerLabel || mb.providerLabel;
+                                    mb.planKind = null;
+                                    mb.requiresConsent = false;
+                                    applyBalanceReady(mb, d.balances, now);
+                                    return;
+                                }
+                                if (d && d.status === 'consent-required') {
+                                    mb.status = 'consent-required';
+                                    mb.requiresConsent = true;
+                                    mb.failures = 0;
+                                    showMeterBubble();
+                                    return;
+                                }
+                                if (d && d.status === 'plan') {
+                                    mb.status = 'plan';
+                                    mb.planKind = d.planKind || null;
+                                    mb.providerLabel = d.providerLabel || mb.providerLabel;
+                                    mb.balances = null;
+                                    mb.failures = 0;
+                                    showMeterBubble();
+                                    return;
+                                }
+                                if (d && d.unsupported) {
+                                    mb.status = 'unsupported';
+                                    mb.balances = null;
+                                    mb.failures = 0;
+                                    showMeterBubble();
+                                    return;
+                                }
+                                mb.status = 'error';
+                                mb.errorCode = (d && d.errorCode) || 'protocol';
+                                mb.failures = (mb.failures || 0) + 1;
+                                mb.at = now;
+                                showMeterBubble();
+                            })
+                            .catch((error) => {
+                                if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                                mb.status = 'error';
+                                mb.errorCode = balanceErrorCodeOf(error);
+                                mb.failures = (mb.failures || 0) + 1;
+                                mb.at = now;
+                                showMeterBubble();
+                            });
+                    };
+                    var runAccount = () => {
+                        if (!api || !api.account || typeof api.account.getBalance !== 'function') {
+                            mb.status = 'account-unavailable';
+                            mb.balances = null;
                             mb.failures = 0;
-                            mb.providerLabel = d.providerLabel || d.provider || target.route;
-                            mb.balances = d.balances;
-                            mb.updatedAt = now;
-                            showMeterBubble(); // 余额到了，刷新常驻气泡
-                        } else if (d && d.unsupported) {
-                            mb.status = 'unsupported';
-                            mb.failures = 0;
-                            mb.providerLabel = d.route || target.route;
                             showMeterBubble();
-                        } else {
-                            // 未配 key / 接口报错：保留上次成功值，按退避阶梯重试
+                            return;
+                        }
+                        // 先取 offset 再乘 -60：避免 esbuild 给 `-new Date()` 注入
+                        // @__PURE__ 注释，导致生成的 bundle 与 Prettier CLI 结果不一致。
+                        var offsetMinutes = new Date().getTimezoneOffset();
+                        var metadata = {
+                            version: PLUGIN_CLIENT_VERSION,
+                            locale: localeNowRef.current || 'zh',
+                            timezoneOffsetSeconds: -offsetMinutes * 60,
+                        };
+                        Promise.resolve(api.account.getBalance(metadata))
+                            .then((result) => {
+                                if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                                if (result === null) {
+                                    mb.status = 'signed-out';
+                                    mb.balances = null;
+                                    mb.failures = 0;
+                                    showMeterBubble();
+                                    return;
+                                }
+                                if (!result || result.status !== 'ready') {
+                                    mb.status = 'error';
+                                    mb.errorCode = 'account';
+                                    mb.failures = (mb.failures || 0) + 1;
+                                    mb.at = now;
+                                    showMeterBubble();
+                                    return;
+                                }
+                                var balances = mergeWalletBalances(result.value, result.bonusWallets);
+                                if (!balances.length) {
+                                    mb.status = 'error';
+                                    mb.errorCode = 'protocol';
+                                    mb.failures = (mb.failures || 0) + 1;
+                                    mb.at = now;
+                                    showMeterBubble();
+                                    return;
+                                }
+                                mb.source = 'account';
+                                mb.provider = 'deepseek';
+                                mb.providerLabel = accountLabel();
+                                applyBalanceReady(mb, balances, now);
+                            })
+                            .catch((error) => {
+                                if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                                mb.status = 'error';
+                                mb.errorCode = balanceErrorCodeOf(error);
+                                mb.failures = (mb.failures || 0) + 1;
+                                mb.at = now;
+                                showMeterBubble();
+                            });
+                    };
+                    var metaKey = target.route + '\u0000' + (target.model || '');
+                    var sameMeta =
+                        !options.force &&
+                        mb.metaKey === metaKey &&
+                        mb.metaConsent === !!(c.balance && c.balance.allowApiKey) &&
+                        now - (mb.metaAt || 0) < 300000;
+                    var dispatchMeta = (d) => {
+                        if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                        if (!d || !d.ok) {
                             mb.status = 'error';
+                            mb.errorCode = 'protocol';
                             mb.failures = (mb.failures || 0) + 1;
                             mb.at = now;
                             showMeterBubble();
+                            return;
                         }
-                    })
-                    .catch(() => {
-                        if (meterBalanceRef.current !== mb) return;
-                        mb.status = 'error';
-                        mb.failures = (mb.failures || 0) + 1;
-                        mb.at = now;
-                        showMeterBubble();
-                    });
-            }, []);
+                        mb.metaKey = metaKey;
+                        mb.metaAt = now;
+                        mb.metaConsent = !!(c.balance && c.balance.allowApiKey);
+                        mb.source = d.source;
+                        mb.provider = d.provider || null;
+                        mb.providerLabel =
+                            d.source === 'account' ? accountLabel() : d.providerLabel || target.route;
+                        mb.planKind = d.planKind || null;
+                        mb.requiresConsent = !!d.requiresConsent;
+                        mb.proxyEnv = d.proxyEnv || null;
+                        if (d.source === 'account') {
+                            runAccount();
+                            return;
+                        }
+                        if (d.source === 'plan') {
+                            mb.status = 'plan';
+                            mb.balances = null;
+                            mb.failures = 0;
+                            showMeterBubble();
+                            return;
+                        }
+                        if (d.source === 'unsupported') {
+                            mb.status = 'unsupported';
+                            mb.balances = null;
+                            mb.failures = 0;
+                            showMeterBubble();
+                            return;
+                        }
+                        if (d.source === 'wallet') {
+                            if (d.requiresConsent) {
+                                mb.status = 'consent-required';
+                                mb.failures = 0;
+                                showMeterBubble();
+                                return;
+                            }
+                            runData();
+                        }
+                    };
+                    if (sameMeta) {
+                        if (mb.source === 'account') runAccount();
+                        else if (mb.source === 'wallet') {
+                            if (mb.requiresConsent) {
+                                mb.status = 'consent-required';
+                                showMeterBubble();
+                            } else runData();
+                        } else if (mb.source === 'plan') {
+                            mb.status = 'plan';
+                            showMeterBubble();
+                        } else if (mb.source === 'unsupported') {
+                            mb.status = 'unsupported';
+                            showMeterBubble();
+                        } else {
+                            mb.status = 'loading';
+                            showMeterBubble();
+                        }
+                        return;
+                    }
+                    fetch('/whale-pet/api/balance?mode=meta' + queryBase.replace('?', '&'))
+                        .then((r) => r.json())
+                        .then(dispatchMeta)
+                        .catch((error) => {
+                            if (meterBalanceRef.current !== mb || mb.seq !== seq) return;
+                            mb.status = 'error';
+                            mb.errorCode = balanceErrorCodeOf(error);
+                            mb.failures = (mb.failures || 0) + 1;
+                            mb.at = now;
+                            showMeterBubble();
+                        });
+                },
+                [
+                    balanceEnabled,
+                    showMeterBubble,
+                    applyBalanceReady,
+                    persistBalanceAlert,
+                    dispatchBalanceAlert,
+                ]
+            );
 
             // ---- 余额模型采纳（启动预取与真实调用上下文共用） ----
             // 采纳某个 provider/model 作为计费模型；模型变化时重置余额缓存并
@@ -1528,18 +2356,27 @@ window.__ModuleLoader__.load({
                     meterBalanceRef.current = {
                         at: 0,
                         status: 'loading',
+                        source: null,
+                        provider: null,
                         providerLabel: route,
+                        planKind: null,
                         balances: null,
                         failures: 0,
                         updatedAt: 0,
+                        errorCode: null,
+                        requiresConsent: false,
+                        proxyEnv: null,
+                        metaKey: '',
+                        metaAt: 0,
+                        metaConsent: null,
                     };
-                    if (cfgRef.current && cfgRef.current.meter) {
+                    if (balanceEnabled()) {
                         showMeterBubble();
-                        refreshBalance();
+                        refreshBalance({ force: true });
                     }
                     return true;
                 },
-                [showMeterBubble, refreshBalance]
+                [balanceEnabled, showMeterBubble, refreshBalance]
             );
 
             // ---- 余额模型预取（resolveSessionModel）----
@@ -1549,12 +2386,23 @@ window.__ModuleLoader__.load({
             // （request/context 事件兜底）。
             var resolveSessionModel = useCallback(() => {
                 var fallbackWaiting = () => {
-                    if (!currentModelRef.current.route && cfgRef.current && cfgRef.current.meter) {
+                    if (!currentModelRef.current.route && balanceEnabled()) {
                         meterBalanceRef.current = {
                             at: 0,
                             status: 'waiting',
+                            source: null,
+                            provider: null,
                             providerLabel: null,
+                            planKind: null,
                             balances: null,
+                            failures: 0,
+                            updatedAt: 0,
+                            errorCode: null,
+                            requiresConsent: false,
+                            proxyEnv: null,
+                            metaKey: '',
+                            metaAt: 0,
+                            metaConsent: null,
                         };
                         showMeterBubble();
                     }
@@ -1587,7 +2435,7 @@ window.__ModuleLoader__.load({
                         fallbackWaiting();
                         return false;
                     });
-            }, [api, adoptModel, showMeterBubble]);
+            }, [api, adoptModel, showMeterBubble, balanceEnabled]);
 
             // ---- 一次性动画播完的回调（endedRef 由 useVideoLayer 在 play 时读取） ----
             var endedRef = useRef(null);
@@ -1718,7 +2566,7 @@ window.__ModuleLoader__.load({
                 });
                 // 回到前台补一次余额（后台期间被 pageVisible 拦下的轮询）
                 var c = cfgRef.current;
-                if (c && c.meter) refreshBalance();
+                if (c && (c.meter || (c.balance && c.balance.alert))) refreshBalance();
             }, [docVisible]);
 
             // ---- 显示开关恢复（false→true）：visible=false 时组件 return null 卸载了
@@ -1828,6 +2676,12 @@ window.__ModuleLoader__.load({
                 var unsub = arbiter.subscribe(onIntent);
                 // 初始同步一次当前意图（让 intentRef 就位）
                 unsub && onIntent(INTENT.IDLE);
+                postDebug({
+                    event: 'sensor-start',
+                    subscribe: !!(api && api.subscribeActivity),
+                    events: !!(api && api.events),
+                    notifyActive: notifyActive,
+                });
                 var stop = startActivitySensor(api, (state) => arbiter.update(state.active), {
                     scope: cfgRef.current?.scope,
                     errorHoldMs: () => arbOptsRef.current.errorHoldMs,
@@ -1843,35 +2697,72 @@ window.__ModuleLoader__.load({
                         if (!route) return;
                         adoptModel(route, model);
                     },
-                    // 用量：累积进当前回合统计（供"本轮统计"气泡与后续完成提示），
-                    // 同时节流刷新官方余额（不在本地估算费用）。
-                    onUsage: (usage) => {
-                        var st = turnStatsRef.current;
+                    // 用量：累积进该会话的回合统计（供"本轮统计"与完成提示），
+                    // 同时节流刷新官方余额（余额只跟当前会话）。
+                    onUsage: (usage, sessionId) => {
+                        var st = statsOf(sessionId);
                         st.usage = addUsage(st.usage, usage);
-                        if (cfgRef.current && cfgRef.current.meter) {
+                        var cUsage = cfgRef.current;
+                        if (
+                            cUsage &&
+                            (cUsage.meter || (cUsage.balance && cUsage.balance.alert)) &&
+                            sessionId === currentSessionRef.current
+                        ) {
                             refreshBalance();
                         }
                     },
-                    // 回合边界：开始重置统计，结束定格（不改动播放，只记账）
+                    // 回合边界：开始重置该会话统计，结束定格并派发完成/失败提示
                     onTurn: (info) => {
-                        var st = turnStatsRef.current;
+                        var st = statsOf(info.sessionId);
                         if (info.phase === 'start') {
-                            turnStatsRef.current = {
-                                startedAt: info.at,
-                                endedAt: 0,
-                                tools: 0,
-                                usage: emptyUsage(),
-                                last: st.last,
-                            };
+                            st.startedAt = info.at;
+                            st.endedAt = 0;
+                            st.tools = 0;
+                            st.usage = emptyUsage();
                             return;
                         }
                         st.endedAt = info.at;
-                        turnStatsRef.current = { ...st, endedAt: info.at, last: summarizeTurn(st) };
+                        postDebug({
+                            event: 'turn-end',
+                            seq: info.seq,
+                            sessionId: info.sessionId,
+                            reason: info.reason && info.reason.kind,
+                        });
+                        var summary = summarizeTurn(st);
+                        st.last = summary;
+                        var cls = classifyTurnEnd(info.reason);
+                        if (cls) {
+                            enqueueNotify({
+                                kind: cls.kind,
+                                sessionId: info.sessionId,
+                                seq: info.seq,
+                                summary: summary,
+                                limit: cls.limit,
+                                message: cls.message,
+                            });
+                        }
                     },
                     // 工具调用计数（回合统计的"步数"）
-                    onToolCall: () => {
-                        turnStatsRef.current.tools += 1;
+                    onToolCall: (name, sessionId) => {
+                        statsOf(sessionId).tools += 1;
                     },
+                    // 审批/问答：等待确认提示；已处理则撤掉对应卡片
+                    onNotify: (frame) => {
+                        if (!frame || frame.snapshot) return;
+                        var ev = frame.type === 'session/event' ? frame.event || {} : frame;
+                        if (ev.type === 'approval/requested' || ev.type === 'question/requested') {
+                            enqueueNotify({ kind: 'waiting', sessionId: frame.sessionId, seq: ev.seq });
+                        } else if (ev.type === 'approval/resolved' || ev.type === 'question/resolved') {
+                            setNotifyCards((q) =>
+                                notifyQueueReducer(q, { type: 'resolve', sessionId: frame.sessionId })
+                            );
+                            waitingNotifyRef.current.delete(frame.sessionId);
+                            // 待确认气泡常驻：处理完自动撤掉
+                            setBubble((b) => (b && b.sticky && b.sessionId === frame.sessionId ? null : b));
+                        }
+                    },
+                    // 通知感知与「感知范围」解耦：后台会话完成时也要收到事件
+                    watchAllRunning: notifyActive,
                     // 多会话感知范围：scope=current 时只接受当前会话的帧（无当前会话则不过滤）
                     filter: (frame) => {
                         var c = cfgRef.current;
@@ -1886,13 +2777,20 @@ window.__ModuleLoader__.load({
                     unsub();
                     arbiter.dispose();
                 };
-            }, [api, isLeader, cfg && cfg.scope, cfg?.scope === 'current' ? currentSession : undefined]);
+            }, [
+                api,
+                isLeader,
+                cfg && cfg.scope,
+                cfg?.scope === 'current' ? currentSession : undefined,
+                notifyActive,
+            ]);
 
-            // ---- 额度气泡常驻：meter 开启时显示常驻气泡并拉取余额；关闭时清除 ----
+            // ---- 余额轮询：meter 或低余额提醒任一开启即活跃；关闭时清除常驻气泡 ----
             useEffect(() => {
                 if (!cfg || !isLeader) return;
-                if (cfg.meter === false) {
-                    // meter 关闭：清除常驻额度气泡（不影响临时文字气泡）
+                var active = !!(cfg.meter || (cfg.balance && cfg.balance.alert));
+                if (!active) {
+                    // 全部关闭：清除常驻额度气泡（不影响临时文字气泡）
                     setBubble((b) => (b && b.sticky ? null : b));
                     return;
                 }
@@ -1907,37 +2805,73 @@ window.__ModuleLoader__.load({
                     meterBalanceRef.current = {
                         at: 0,
                         status: canResolve ? 'loading' : 'waiting',
+                        source: null,
+                        provider: null,
                         providerLabel: null,
+                        planKind: null,
                         balances: null,
+                        failures: 0,
+                        updatedAt: 0,
+                        errorCode: null,
+                        requiresConsent: false,
+                        proxyEnv: null,
+                        metaKey: '',
+                        metaAt: 0,
+                        metaConsent: null,
                     };
                 }
                 showMeterBubble();
-                refreshBalance();
-                // 也同步外部产生的消费；服务端仍有 30 秒缓存与限流保护。
-                var balanceTimer = setInterval(refreshBalance, 31000);
+                // 激活/设置变化时强制一次 meta，保证 allowApiKey 改变后立即生效。
+                refreshBalance({ force: true });
+                var delay = cfg.balance && cfg.balance.refreshMs;
+                if (!delay) return;
+                // 后台标签由 refreshBalance 内部按 5min 下限节流；这里只负责起表。
+                var balanceTimer = setInterval(() => refreshBalance(), delay);
                 return () => clearInterval(balanceTimer);
-            }, [cfg && cfg.meter, isLeader]);
+            }, [
+                cfg && cfg.meter,
+                cfg && cfg.balance && cfg.balance.alert,
+                cfg && cfg.balance && cfg.balance.refreshMs,
+                cfg && cfg.balance && cfg.balance.allowApiKey,
+                isLeader,
+            ]);
 
             // ---- 余额模型预取：当前会话出现/切换时直接解析其模型选择 ----
             // 打开 Harness 时默认会话即带模型，无需先调用一次模型（request/context）
             // 才能显示余额；解析失败允许下次会话变化时重试。
             useEffect(() => {
                 var c = cfgRef.current;
-                if (!c || c.meter !== true || !isLeader) return;
+                if (!c || !(c.meter || (c.balance && c.balance.alert)) || !isLeader) return;
                 var sessionId = currentSessionRef.current;
                 currentModelRef.current = { route: '', model: '' };
-                meterBalanceRef.current = { at: 0, status: 'waiting', providerLabel: null, balances: null };
+                meterBalanceRef.current = {
+                    at: 0,
+                    status: 'waiting',
+                    source: null,
+                    provider: null,
+                    providerLabel: null,
+                    planKind: null,
+                    balances: null,
+                    failures: 0,
+                    updatedAt: 0,
+                    errorCode: null,
+                    requiresConsent: false,
+                    proxyEnv: null,
+                    metaKey: '',
+                    metaAt: 0,
+                    metaConsent: null,
+                };
                 showMeterBubble();
                 if (!sessionId) return;
                 resolveSessionModel();
-            }, [currentSession, cfg && cfg.meter, isLeader]);
+            }, [currentSession, cfg && cfg.meter, cfg && cfg.balance && cfg.balance.alert, isLeader]);
 
             // ---- 气泡定时消失（临时气泡 3.6s；常驻额度气泡 sticky 不自动消失） ----
             useEffect(() => {
-                if (!bubble || bubble.sticky) return;
-                var id = setTimeout(() => setBubble(null), 3600);
+                if (!bubble || bubble.sticky || bubbleHovered) return;
+                var id = setTimeout(() => setBubble(null), bubble.ttl || 3600);
                 return () => clearTimeout(id);
-            }, [bubble]);
+            }, [bubble, bubbleHovered]);
 
             // ---- 组件卸载：清理移动 rAF 与惯性滑行 ----
             useEffect(
@@ -2741,9 +3675,9 @@ window.__ModuleLoader__.load({
                 if (dragRef.current.active || dragRef.current.dragging) return; // 拖拽中不弹
                 e.preventDefault(); // 屏蔽浏览器默认菜单
                 e.stopPropagation();
-                // 钳制在视口内（菜单约 160×160：回家/本轮统计/打开设置/隐藏）
-                var x = Math.min(e.clientX, window.innerWidth - 170);
-                var y = Math.min(e.clientY, window.innerHeight - 170);
+                // 钳制在视口内（菜单约 200×200：回家/统计/刷新余额/设置/隐藏）
+                var x = Math.min(e.clientX, window.innerWidth - 210);
+                var y = Math.min(e.clientY, window.innerHeight - 210);
                 setMenu({ x: Math.max(x, 4), y: Math.max(y, 4) });
             };
             // 回家：回默认角落（清自定义位置），到家打个招呼
@@ -2792,7 +3726,7 @@ window.__ModuleLoader__.load({
             // 本轮统计：把累计的 tokens / 工具步数 / 耗时说一句（数据已在 ref 里）
             var menuShowStats = () => {
                 setMenu(null);
-                var st = turnStatsRef.current;
+                var st = statsOf(currentSessionRef.current);
                 var last = st.last || summarizeTurn(st);
                 if (!last.durationMs && !last.tools && !last.tokens) {
                     showBubble(tPet('statNone'));
@@ -2803,6 +3737,77 @@ window.__ModuleLoader__.load({
                 if (last.tools) parts.push(last.tools + ' ' + tPet('statSteps'));
                 if (last.tokens) parts.push(formatTokens(last.tokens) + ' tokens');
                 showBubble(tPet('statTurn') + ' ' + parts.join(' · '));
+            };
+            // 临时：右键「测试通知」——单独验证系统通知与提示音，不依赖回合时序
+            var menuTestNotify = () => {
+                setMenu(null);
+                var sent = notifierRef.current.send({
+                    title: '鲸鱼桌宠 · 测试通知',
+                    body: '看到这条说明 Windows 通知通道正常',
+                    icon: '/whale-pet/poster/icon.png',
+                    tag: 'whale-pet:test',
+                    silent: false,
+                });
+                postDebug({ event: 'test-send', ok: sent, perm: notifierRef.current.permission() });
+                notifySoundRef.current.prime();
+                postDebug({ event: 'test-chime', ok: notifySoundRef.current.play() });
+                showBubble(
+                    sent ? '测试通知已发送' : '系统通知不可用（' + notifierRef.current.permission() + '）'
+                );
+            };
+            // 临时：对比测试 B——真实标题/正文 + 长 tag，不带 onClick
+            var menuTestNotifyB = () => {
+                setMenu(null);
+                showBubble('10 秒后发送对比 B，请切走');
+                setTimeout(() => {
+                    var okSent = notifierRef.current.send({
+                        title: '完成 · 设计任务完成提示功能',
+                        body: '492k tokens',
+                        icon: '/whale-pet/poster/icon.png',
+                        tag: 'whale-pet:done:session-a9c66958-2c9c-4bd6-8531-7ba066b20624',
+                        requireInteraction: false,
+                        silent: false,
+                    });
+                    postDebug({ event: 'delayed-b', ok: okSent });
+                }, 10000);
+            };
+            // 临时：10 秒后再发系统通知，便于切走后验证「页面不可见」路径
+            var menuTestNotifyDelayed = () => {
+                setMenu(null);
+                showBubble('10 秒后发送测试通知，请切走');
+                setTimeout(() => {
+                    var okSent = notifierRef.current.send({
+                        title: '完成 · 设计任务完成提示功能',
+                        body: '492k tokens',
+                        icon: '/whale-pet/poster/icon.png',
+                        tag: 'whale-pet:done:test-session',
+                        requireInteraction: false,
+                        silent: false,
+                        onClick: () => postDebug({ event: 'delayed-click' }),
+                    });
+                    postDebug({
+                        event: 'delayed-send',
+                        ok: okSent,
+                        visible: pageVisible(),
+                        focused: pageFocused(),
+                    });
+                    notifySoundRef.current.prime();
+                    notifySoundRef.current.play();
+                }, 10000);
+            };
+            // 刷新余额：account → Remote；wallet → force；plan/未授权只更新状态。
+            var menuRefreshBalance = () => {
+                setMenu(null);
+                if (!currentModelRef.current.route) {
+                    showBubble(tPet('meterWaiting'));
+                    return;
+                }
+                if (!balanceEnabled()) {
+                    showBubble(tPet('balanceEnableHint'));
+                    return;
+                }
+                showBubble(tPet('balanceRefreshing'));
+                refreshBalance({ force: true });
             };
 
             // 打开本插件的配置页（"图1"）：0.2.x 里这一页在「插件」主面板中，
@@ -3039,16 +4044,16 @@ window.__ModuleLoader__.load({
                 title: 'dsh-whale-pet',
             };
 
-            // 显示开关：visible=false 时隐藏桌宠（组件不渲染 DOM；hooks 继续运行，
-            // 重新开启时视频元素重建、状态保留在 refs 中）
-            if (cfg && cfg.visible === false) return null;
+            // 显示开关：visible=false 只隐藏桌宠 DOM；通知卡片独立渲染，不受影响
+            // （hooks 继续运行，重新开启时视频元素重建、状态保留在 refs 中）
+            var petVisible = !(cfg && cfg.visible === false);
             // 非主标签不渲染宠物（设置卡仍在：两个标签都能改设置）
             if (!isLeader) return null;
 
             // 渲染树：root > stage > [fx > breathe > [video A, video B], 命中层]
             // fx 层承载 JS 指令式形变（倾斜/拖拽拉伸），breathe 层承载 CSS 动画
             // （呼吸/弹跳/落定）；命中层在最上层承载交互，几何不受形变影响
-            return h('div', {
+            var petRoot = h('div', {
                 ref: rootRef,
                 className: 'wp-root' + (selected ? ' wp-selected' : ''),
                 'data-corner': corner, // CSS 决定默认角落
@@ -3124,8 +4129,31 @@ window.__ModuleLoader__.load({
                     bubble &&
                         h('div', {
                             key: bubble.seq,
-                            className: 'wp-bubble' + (bubble.sticky ? ' wp-bubble-sticky' : ''),
-                            role: 'status',
+                            className:
+                                'wp-bubble' +
+                                (bubble.sticky ? ' wp-bubble-sticky' : '') +
+                                (bubble.sessionId ? ' wp-bubble-action' : '') +
+                                (bubble.sessionId ? ' wp-bubble-notify' : ''),
+                            onMouseEnter: () => setBubbleHovered(true),
+                            onMouseLeave: () => setBubbleHovered(false),
+                            role: bubble.sessionId ? 'button' : 'status',
+                            style: bubble.sessionId ? { pointerEvents: 'auto', zIndex: 47 } : undefined,
+                            tabIndex: bubble.sessionId ? 0 : undefined,
+                            title: bubble.sessionId ? tPet('notifyOpen') : undefined,
+                            onClick: bubble.sessionId
+                                ? () => {
+                                      postDebug({ event: 'bubble-click', sessionId: bubble.sessionId });
+                                      openNotifySession(bubble.sessionId);
+                                  }
+                                : undefined,
+                            onKeyDown: bubble.sessionId
+                                ? (e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          openNotifySession(bubble.sessionId);
+                                      }
+                                  }
+                                : undefined,
                             children: [
                                 h(
                                     'svg',
@@ -3181,6 +4209,66 @@ window.__ModuleLoader__.load({
                                         type: 'button',
                                         role: 'menuitem',
                                         className: 'wp-menuItem',
+                                        onClick: menuRefreshBalance,
+                                    },
+                                    tPet('menuRefreshBalance')
+                                ),
+                                lastNotifyRef.current &&
+                                    Date.now() - lastNotifyRef.current.at < 120000 &&
+                                    lastNotifyRef.current.sessionId &&
+                                    h(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            role: 'menuitem',
+                                            className: 'wp-menuItem',
+                                            onClick: () => {
+                                                var target = lastNotifyRef.current;
+                                                setMenu(null);
+                                                openNotifySession(target && target.sessionId);
+                                            },
+                                        },
+                                        tPet('menuBackToDone')
+                                    ),
+                                WP_DEBUG &&
+                                    h(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            role: 'menuitem',
+                                            className: 'wp-menuItem',
+                                            onClick: menuTestNotify,
+                                        },
+                                        '测试通知'
+                                    ),
+                                WP_DEBUG &&
+                                    h(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            role: 'menuitem',
+                                            className: 'wp-menuItem',
+                                            onClick: menuTestNotifyDelayed,
+                                        },
+                                        '10 秒后测试通知'
+                                    ),
+                                WP_DEBUG &&
+                                    h(
+                                        'button',
+                                        {
+                                            type: 'button',
+                                            role: 'menuitem',
+                                            className: 'wp-menuItem',
+                                            onClick: menuTestNotifyB,
+                                        },
+                                        '10 秒后测试 B'
+                                    ),
+                                h(
+                                    'button',
+                                    {
+                                        type: 'button',
+                                        role: 'menuitem',
+                                        className: 'wp-menuItem',
                                         onClick: menuOpenSettings,
                                     },
                                     tPet('menuSettings')
@@ -3199,6 +4287,20 @@ window.__ModuleLoader__.load({
                         }),
                 ],
             });
+            // 通知栈独立于桌宠：宠物被隐藏时仍然要能收到完成提示
+            var notifyBottom = petVisible && corner.indexOf('bottom') === 0 ? Math.round(stageH) + 16 : 16;
+            return h(
+                react.Fragment,
+                null,
+                petVisible ? petRoot : null,
+                h(NotifyStack, {
+                    cards: notifyCards.cards,
+                    t: tPet,
+                    onDismiss: dismissNotify,
+                    onOpen: openNotifyCard,
+                    bottom: notifyBottom,
+                })
+            );
         }
 
         // ============================================================================
@@ -3280,6 +4382,52 @@ window.__ModuleLoader__.load({
                 hintCalendarFestival: '只在节日前后播放节日动画（春节、中秋、万圣节等）',
                 labelCalendarSeasonal: '四季动作',
                 hintCalendarSeasonal: '只在对应季节播放四季动画（堆雪人／摇扇／落叶／风筝）',
+                // 回合完成提示
+                secBalance: '账户余额',
+                hintBalance: '先选来源（账户/套餐/钱包）；API-key 钱包只在显式授权后查询',
+                labelBalanceAlert: '低余额提醒',
+                hintBalanceAlert: '低于阈值时提醒一次；充值回到阈值以上后复位',
+                labelAllowApiKey: '允许使用 API key 查询',
+                hintAllowApiKey: 'key 只在宿主使用，仅发往服务商官方余额端点；不写入日志或浏览器',
+                labelThresholdCny: 'CNY 阈值',
+                hintThresholdCny: '低于该金额提醒；0 = 关闭人民币提醒',
+                labelThresholdUsd: 'USD 阈值',
+                hintThresholdUsd: '低于该金额提醒；0 = 关闭美元提醒',
+                labelBalanceInterval: '刷新间隔',
+                hintBalanceInterval: '页面不可见时仅账户/钱包来源按 5 分钟下限轮询',
+                balanceRefresh30s: '30 秒',
+                balanceRefresh60s: '60 秒',
+                balanceRefresh5m: '5 分钟',
+                balanceRefreshOff: '关闭',
+                hintBalanceSource:
+                    '来源与错误状态会显示在宠物气泡；套餐/未授权不会自动查询。代理只读 HTTPS_PROXY/HTTP_PROXY，系统代理不生效',
+                secNotify: '回合提示',
+                hintNotify: '回合结束时在桌宠上方提示并联动动画；切到其他软件时走系统通知',
+                labelNotifyDone: '完成提示',
+                hintNotifyDone: '回合正常结束时提示',
+                labelNotifyError: '失败提示',
+                hintNotifyError: '回合因错误中断时提示',
+                labelNotifyWaiting: '待确认提示',
+                hintNotifyWaiting: '等待你审批或回答时提示',
+                labelNotifySystem: '系统通知',
+                hintNotifySystem: '切到其他软件时用系统通知提醒（Web 首次需允许）',
+                labelNotifySound: '提示音',
+                hintNotifySound: '系统通知不可用时播放短提示音',
+                notifyPermReady: '系统通知已就绪',
+                notifyPermAsk: '允许浏览器通知',
+                notifyPermDenied: '浏览器已拒绝通知，请在站点设置中允许',
+                notifyPermInsecure: '局域网 http 无法系统通知，将改用提示音',
+                notifyPermUnsupported: '当前环境不支持系统通知',
+                notifyDone: '完成',
+                notifyError: '失败',
+                notifyWaiting: '待确认',
+                notifyWaitBody: '等待你的审批或回答',
+                notifyErrorBody: '回合发生错误',
+                notifySteps: '{n} 步',
+                notifyLimit: '达到长度上限',
+                notifyOpen: '打开会话',
+                notifyBubbleHint: '点击回会话',
+                notifyDismiss: '关闭提示',
                 selectHint: '点一下屏幕，让我走过去~',
                 unsaved: '等待自动保存',
                 meterBalance: '余额 ',
@@ -3287,12 +4435,32 @@ window.__ModuleLoader__.load({
                 meterUnsupported: '当前服务商暂不支持',
                 meterFailed: '查询失败',
                 meterStale: '（上次 {time}，刷新失败）',
+                meterLoading: '查询中…',
+                meterErrorNetwork: '网络/代理不可达',
+                meterErrorTimeout: '查询超时',
+                meterErrorTls: '代理证书不受信任',
+                meterErrorAuth: '凭据被拒绝',
+                meterErrorAccount: '账户查询失败',
+                meterErrorProtocol: '响应无效',
+                meterErrorUpstream: '接口返回错误',
+                meterErrorMissingKey: 'API key 未配置',
+                meterConsent: '需要授权使用 API key 查询',
+                meterSignedOut: '未登录 DeepSeek 账户',
+                meterAccountUnavailable: '当前 DSH 版本不支持账户余额',
+                meterPlan: '套餐/订阅计费，不适用余额查询',
+                balanceAccountLabel: 'DeepSeek 账户',
+                balanceAlertTitle: '余额偏低',
+                balanceAlertLine: '{amount}（阈值 {threshold}）',
+                balanceView: '查看余额',
+                balanceEnableHint: '先在设置里开启「显示余额」或「低余额提醒」',
+                balanceRefreshing: '正在刷新余额…',
                 staticFallbackHint: '这个浏览器不支持透明视频，已改用静态形象（动作仍会切换）',
                 // 交互增强
                 menuLabel: '宠物菜单',
                 menuHome: '回家',
                 menuSettings: '打开设置',
                 menuHide: '隐藏',
+                menuBackToDone: '回到完成的会话',
                 settingsHint: '从左侧栏底部打开设置（齿轮）哦~',
                 settingsRowHint: '我在插件页高亮那一行啦，点它的设置就能改我~',
                 // 资源层
@@ -3443,6 +4611,7 @@ window.__ModuleLoader__.load({
                 loadFailed: '无法读取设置',
                 saveFailed: '保存失败：',
                 menuStats: '本轮统计',
+                menuRefreshBalance: '刷新余额',
                 statTurn: '本轮',
                 statSteps: '步',
                 statNone: '本轮还没有数据：先让 Agent 跑一轮吧~',
@@ -3501,6 +4670,56 @@ window.__ModuleLoader__.load({
                 labelCalendarSeasonal: 'Seasonal actions',
                 hintCalendarSeasonal:
                     'Play seasonal animations only in their season (snowman / fan / leaves / kite)',
+                secBalance: 'Account balance',
+                hintBalance:
+                    'Source first (account / plan / wallet); API-key wallets are queried only after explicit consent',
+                labelBalanceAlert: 'Low-balance alert',
+                hintBalanceAlert: 'Alert once below the threshold; resets after topping up',
+                labelAllowApiKey: 'Allow API-key queries',
+                hintAllowApiKey:
+                    "The key stays in the Host and is sent only to the provider's official balance endpoint",
+                labelThresholdCny: 'CNY threshold',
+                hintThresholdCny: 'Alert below this amount; 0 disables CNY alerts',
+                labelThresholdUsd: 'USD threshold',
+                hintThresholdUsd: 'Alert below this amount; 0 disables USD alerts',
+                labelBalanceInterval: 'Refresh interval',
+                hintBalanceInterval: 'While hidden, only account/wallet sources poll, with a 5-minute floor',
+                balanceRefresh30s: '30 s',
+                balanceRefresh60s: '60 s',
+                balanceRefresh5m: '5 min',
+                balanceRefreshOff: 'Off',
+                hintBalanceSource:
+                    'The source and errors appear in the pet bubble; plans and unconsented wallets are never queried automatically. Proxy variables are read at launch; OS proxy settings are ignored',
+                secNotify: 'Turn notifications',
+                hintNotify:
+                    'Show a bubble above the pet when a turn ends; use system notifications while you are in another app',
+                labelNotifyDone: 'Completion',
+                hintNotifyDone: 'Notify when a turn finishes',
+                labelNotifyError: 'Failure',
+                hintNotifyError: 'Notify when a turn ends with an error',
+                labelNotifyWaiting: 'Needs your input',
+                hintNotifyWaiting: 'Notify while waiting for your approval or answer',
+                labelNotifySystem: 'System notifications',
+                hintNotifySystem:
+                    'Use system notifications while you are in another app (grant once in the browser)',
+                labelNotifySound: 'Chime',
+                hintNotifySound: 'Play a short chime when system notifications are unavailable',
+                notifyPermReady: 'System notifications are ready',
+                notifyPermAsk: 'Allow browser notifications',
+                notifyPermDenied: 'Browser notifications are blocked — allow them in site settings',
+                notifyPermInsecure:
+                    'HTTP on a LAN address cannot use system notifications; the chime will be used',
+                notifyPermUnsupported: 'System notifications are not supported here',
+                notifyDone: 'Done',
+                notifyError: 'Failed',
+                notifyWaiting: 'Needs input',
+                notifyWaitBody: 'Waiting for your approval or answer',
+                notifyErrorBody: 'The turn ended with an error',
+                notifySteps: '{n} steps',
+                notifyLimit: 'hit the length limit',
+                notifyOpen: 'Open session',
+                notifyBubbleHint: 'click to open',
+                notifyDismiss: 'Dismiss notification',
                 selectHint: 'Click anywhere to send me there~',
                 unsaved: 'Waiting to auto-save',
                 meterBalance: 'Balance ',
@@ -3508,6 +4727,25 @@ window.__ModuleLoader__.load({
                 meterUnsupported: 'Provider not supported',
                 meterFailed: 'Query failed',
                 meterStale: '(last {time}, refresh failed)',
+                meterLoading: 'Querying…',
+                meterErrorNetwork: 'Network/proxy unreachable',
+                meterErrorTimeout: 'Query timed out',
+                meterErrorTls: 'Proxy certificate not trusted',
+                meterErrorAuth: 'Credential rejected',
+                meterErrorAccount: 'Account query failed',
+                meterErrorProtocol: 'Invalid response',
+                meterErrorUpstream: 'Endpoint returned an error',
+                meterErrorMissingKey: 'API key not configured',
+                meterConsent: 'API-key query needs your permission',
+                meterSignedOut: 'Not signed in to DeepSeek',
+                meterAccountUnavailable: 'Account balance is unavailable in this DSH version',
+                meterPlan: 'Plan/subscription billing — no wallet balance',
+                balanceAccountLabel: 'DeepSeek account',
+                balanceAlertTitle: 'Low balance',
+                balanceAlertLine: '{amount} (threshold {threshold})',
+                balanceView: 'View balance',
+                balanceEnableHint: 'Enable "Show balance" or "Low-balance alert" in Settings first',
+                balanceRefreshing: 'Refreshing balance…',
                 staticFallbackHint:
                     'This browser cannot render transparent video, so static poses are used instead (actions still switch)',
                 // 交互增强
@@ -3515,6 +4753,7 @@ window.__ModuleLoader__.load({
                 menuHome: 'Go home',
                 menuSettings: 'Open settings',
                 menuHide: 'Hide',
+                menuBackToDone: 'Back to finished session',
                 settingsHint: 'Open settings from the bottom of the left sidebar~',
                 settingsRowHint:
                     'I highlighted my row on the Plugins page — open its settings to configure me.',
@@ -3667,6 +4906,7 @@ window.__ModuleLoader__.load({
                 loadFailed: 'Failed to read settings',
                 saveFailed: 'Save failed: ',
                 menuStats: 'This turn',
+                menuRefreshBalance: 'Refresh balance',
                 statTurn: 'This turn',
                 statSteps: 'steps',
                 statNone: 'No data yet — let the agent finish a turn first.',
@@ -4841,6 +6081,14 @@ window.__ModuleLoader__.load({
                     else mq.removeListener(onChange);
                 };
             }, []);
+            // 系统通知能力与授权状态：决定「系统通知」开关是否可用
+            var notifierRef = useRef(null);
+            if (!notifierRef.current) notifierRef.current = createSystemNotifier();
+            var notifyEnv = notificationEnvironment(typeof window !== 'undefined' ? window : null);
+            var [sysPerm, setSysPerm] = useState(() => notifierRef.current.permission());
+            var requestNotifyPermission = () => {
+                notifierRef.current.requestPermission().then((perm) => setSysPerm(perm));
+            };
             var uploadCustomFile = (event) => {
                 var file = event.target.files && event.target.files[0];
                 event.target.value = '';
@@ -5075,6 +6323,20 @@ window.__ModuleLoader__.load({
                                 onPatch((d) => ({ ...d, meter: e.target.checked }))
                             ),
                             toggleItem(
+                                'balanceAlert',
+                                t('labelBalanceAlert'),
+                                t('hintBalanceAlert'),
+                                !!(draft.balance && draft.balance.alert),
+                                (e) =>
+                                    onPatch((d) => ({
+                                        ...d,
+                                        balance: {
+                                            ...(d.balance || DEFAULT_BALANCE),
+                                            alert: e.target.checked,
+                                        },
+                                    }))
+                            ),
+                            toggleItem(
                                 'fx',
                                 t('labelFx'),
                                 // 系统减少动态效果时动效被运行时关闭：开关显示为未勾选并禁用
@@ -5296,8 +6558,174 @@ window.__ModuleLoader__.load({
                 ],
             });
 
+            // 账户余额：来源分层由宿主判定；这里只配置提醒/阈值/刷新/授权。
+            var balanceSettings = draft.balance || DEFAULT_BALANCE;
+            var balanceThresholds = balanceSettings.thresholds || DEFAULT_BALANCE.thresholds;
+            var patchBalance = (key, value) =>
+                onPatch((d) => ({
+                    ...d,
+                    balance: { ...(d.balance || DEFAULT_BALANCE), [key]: value },
+                }));
+            var patchBalanceThreshold = (currency, value) =>
+                onPatch((d) => ({
+                    ...d,
+                    balance: {
+                        ...(d.balance || DEFAULT_BALANCE),
+                        thresholds: {
+                            ...((d.balance && d.balance.thresholds) || DEFAULT_BALANCE.thresholds),
+                            [currency]: value,
+                        },
+                    },
+                }));
+            var balanceContent = h('div', {
+                children: [
+                    toggleItem(
+                        'balanceAllowApiKey',
+                        t('labelAllowApiKey'),
+                        t('hintAllowApiKey'),
+                        !!balanceSettings.allowApiKey,
+                        (e) => patchBalance('allowApiKey', e.target.checked)
+                    ),
+                    balanceSettings.alert
+                        ? h('div', {
+                              className: 'wp-sf-settingGrid',
+                              children: [
+                                  settingItem(
+                                      'balanceCny',
+                                      t('labelThresholdCny'),
+                                      t('hintThresholdCny'),
+                                      numInput(
+                                          balanceThresholds.CNY,
+                                          (v) => patchBalanceThreshold('CNY', Math.max(0, v)),
+                                          '0.01'
+                                      )
+                                  ),
+                                  settingItem(
+                                      'balanceUsd',
+                                      t('labelThresholdUsd'),
+                                      t('hintThresholdUsd'),
+                                      numInput(
+                                          balanceThresholds.USD,
+                                          (v) => patchBalanceThreshold('USD', Math.max(0, v)),
+                                          '0.01'
+                                      )
+                                  ),
+                              ],
+                          })
+                        : null,
+                    h('div', {
+                        className: 'wp-sf-settingGrid',
+                        children: [
+                            settingItem(
+                                'balanceInterval',
+                                t('labelBalanceInterval'),
+                                t('hintBalanceInterval'),
+                                singleSelect(
+                                    balanceSettings.refreshMs,
+                                    [
+                                        [30000, t('balanceRefresh30s')],
+                                        [60000, t('balanceRefresh60s')],
+                                        [300000, t('balanceRefresh5m')],
+                                        [0, t('balanceRefreshOff')],
+                                    ],
+                                    (v) => patchBalance('refreshMs', Number(v))
+                                )
+                            ),
+                        ],
+                    }),
+                    h('p', { className: 'wp-sf-customHint' }, t('hintBalanceSource')),
+                ],
+            });
+
+            // 回合提示：三个事件开关 + 系统通知/提示音；系统通知需要安全上下文与授权
+            var notifySettings = draft.notify || DEFAULT_NOTIFY;
+            var patchNotify = (key, value) =>
+                onPatch((d) => ({ ...d, notify: { ...(d.notify || DEFAULT_NOTIFY), [key]: value } }));
+            var systemAvailable = notifyEnv.secure && notifyEnv.supported;
+            // 只有真正 granted 才算"开"：default（还没问过）显示为关，点开关即请求权限
+            var systemChecked = !!notifySettings.system && systemAvailable && sysPerm === 'granted';
+            var permText = !notifyEnv.supported
+                ? t('notifyPermUnsupported')
+                : !notifyEnv.secure
+                  ? t('notifyPermInsecure')
+                  : sysPerm === 'granted'
+                    ? t('notifyPermReady')
+                    : sysPerm === 'denied'
+                      ? t('notifyPermDenied')
+                      : t('notifyPermAsk');
+            var notifyContent = h('div', {
+                children: [
+                    h('div', {
+                        className: 'wp-sf-toggleGrid',
+                        children: [
+                            toggleItem(
+                                'notifyDone',
+                                t('labelNotifyDone'),
+                                t('hintNotifyDone'),
+                                !!notifySettings.done,
+                                (e) => patchNotify('done', e.target.checked)
+                            ),
+                            toggleItem(
+                                'notifyError',
+                                t('labelNotifyError'),
+                                t('hintNotifyError'),
+                                !!notifySettings.error,
+                                (e) => patchNotify('error', e.target.checked)
+                            ),
+                            toggleItem(
+                                'notifyWaiting',
+                                t('labelNotifyWaiting'),
+                                t('hintNotifyWaiting'),
+                                !!notifySettings.waiting,
+                                (e) => patchNotify('waiting', e.target.checked)
+                            ),
+                            toggleItem(
+                                'notifySystem',
+                                t('labelNotifySystem'),
+                                t('hintNotifySystem'),
+                                systemChecked,
+                                (e) => {
+                                    if (!e.target.checked) {
+                                        patchNotify('system', false);
+                                        return;
+                                    }
+                                    if (!systemAvailable) return;
+                                    // 必须在用户手势内请求权限（浏览器要求）
+                                    notifierRef.current.requestPermission().then((perm) => {
+                                        setSysPerm(perm);
+                                        if (perm === 'granted') patchNotify('system', true);
+                                    });
+                                },
+                                !systemAvailable || sysPerm === 'denied'
+                            ),
+                            toggleItem(
+                                'notifySound',
+                                t('labelNotifySound'),
+                                t('hintNotifySound'),
+                                !!notifySettings.sound,
+                                (e) => patchNotify('sound', e.target.checked)
+                            ),
+                        ],
+                    }),
+                    h('p', { className: 'wp-sf-customHint' }, permText),
+                    sysPerm === 'default' && systemAvailable
+                        ? h(
+                              'button',
+                              {
+                                  type: 'button',
+                                  className: 'wp-sf-add',
+                                  onClick: requestNotifyPermission,
+                              },
+                              t('notifyPermAsk')
+                          )
+                        : null,
+                ],
+            });
+
             var bodyContent = [
                 panel(t('secParams'), null, paramsContent),
+                panel(t('secBalance'), t('hintBalance'), balanceContent),
+                panel(t('secNotify'), t('hintNotify'), notifyContent),
                 panel(
                     t('secIntents'),
                     null,
@@ -5474,6 +6902,8 @@ window.__ModuleLoader__.load({
                             posX: typeof nextDraft.posX === 'number' ? nextDraft.posX : -1,
                             posY: typeof nextDraft.posY === 'number' ? nextDraft.posY : -1,
                             calendar: nextDraft.calendar || DEFAULT_CONFIG.calendar,
+                            balance: nextDraft.balance || DEFAULT_CONFIG.balance,
+                            notify: nextDraft.notify || DEFAULT_CONFIG.notify,
                             behavior: nextDraft.behavior,
                             intents: nextDraft.intents,
                             pools: nextDraft.pools,
@@ -5586,7 +7016,9 @@ window.__ModuleLoader__.load({
             if (connection?.api) return mount(ctx, config); // 0.1.0 旧版：api 直取
             const servicesReady = () => {
                 try {
-                    return !!(ctx.get('sessions') && ctx.get('remote') && ctx.get('uiSession'));
+                    // uiSession 在 0.2.x 已不是客户端服务：只等 sessions/remote，
+                    // 否则 inject 永远不回调，1.5s 兜底拿到的是未注入的 ctx。
+                    return !!(ctx.get('sessions') && ctx.get('remote'));
                 } catch (e) {
                     return false;
                 }
@@ -5605,9 +7037,8 @@ window.__ModuleLoader__.load({
                 try {
                     if (typeof ctx.inject === 'function') {
                         // 官方同款：点号命名空间必须作为依赖注入，之后 ctx.remote.session 才可访问。
-                        ctx.inject(
-                            ['remote', 'remote.session', 'remote.settings', 'sessions', 'uiSession'],
-                            (readyCtx) => doMount(readyCtx)
+                        ctx.inject(['remote', 'remote.session', 'remote.settings', 'sessions'], (readyCtx) =>
+                            doMount(readyCtx)
                         );
                     }
                 } catch (e) {
@@ -5617,7 +7048,7 @@ window.__ModuleLoader__.load({
                 return;
             }
             // 0.1.2：沿用官方 inject 等待会话/远端服务（服务名不含点号）。
-            return ctx.inject(['sessions', 'remote', 'uiSession'], (ready) => mount(ready, config));
+            return ctx.inject(['sessions', 'remote'], (ready) => mount(ready, config));
         }
 
         function mount(ctx, config) {
@@ -5641,11 +7072,31 @@ window.__ModuleLoader__.load({
                 }
             }
             var remoteSession = undefined;
-            if (remoteSvc) {
+            // 0.2.0 最稳的取法：按服务名 ctx.get('remote.session')，不碰 inject 守卫。
+            try {
+                remoteSession = ctx.get('remote.session');
+            } catch (e) {
+                remoteSession = undefined;
+            }
+            if (!remoteSession && remoteSvc) {
                 try {
                     remoteSession = remoteSvc.session;
                 } catch (e) {
                     remoteSession = undefined;
+                }
+            }
+            // remote.account 只做软获取：未安装账户插件/非 owner 时不能阻塞挂载。
+            var remoteAccount = undefined;
+            try {
+                remoteAccount = ctx.get('remote.account');
+            } catch (e) {
+                remoteAccount = undefined;
+            }
+            if (!remoteAccount && remoteSvc) {
+                try {
+                    remoteAccount = remoteSvc.account;
+                } catch (e) {
+                    remoteAccount = undefined;
                 }
             }
             var api = null;
@@ -5655,6 +7106,7 @@ window.__ModuleLoader__.load({
                     sessions: ctx.get('sessions'),
                     remote: remoteSvc,
                     remoteSession,
+                    remoteAccount,
                     uiSession: ctx.get('uiSession'),
                     getSettings: () => {
                         try {
@@ -5667,6 +7119,22 @@ window.__ModuleLoader__.load({
             } catch (e) {
                 console.error('[whale-pet] resolveHostApi failed:', e);
             }
+            postDebug({
+                event: 'mount',
+                modern: modern,
+                remote: !!remoteSvc,
+                remoteSession: !!remoteSession,
+                sessions: !!(() => {
+                    try {
+                        return ctx.get('sessions');
+                    } catch (e) {
+                        return null;
+                    }
+                })(),
+                api: !!api,
+                subscribe: !!(api && api.subscribeActivity),
+                events: !!(api && api.events),
+            });
             // locale 服务（可选获取）：国际化字典注册（中/英）；缺失时回退中文
             var locale = null;
             try {
@@ -5681,6 +7149,13 @@ window.__ModuleLoader__.load({
                 layout = ctx.get('layout');
             } catch (e) {
                 layout = null;
+            }
+            // uiWorkspace：点击完成提示卡片回到对应会话（0.2.x 才有；0.1.x 退化为只读提示）
+            var uiWorkspace = null;
+            try {
+                uiWorkspace = ctx.get('uiWorkspace');
+            } catch (e) {
+                uiWorkspace = null;
             }
             if (locale) {
                 try {
@@ -5728,6 +7203,45 @@ window.__ModuleLoader__.load({
                             customStore,
                             ruleRuntime,
                             layout,
+                            uiWorkspace,
+                            openSession: (sessionId) => {
+                                // 点击时再解析服务：避免挂载期 ctx 未注入导致拿到 undefined；
+                                // 返回状态供调试日志区分「无服务 / 抛错 / 成功」。
+                                try {
+                                    var ws = ctx.get('uiWorkspace');
+                                    if (!ws) return 'no-service';
+                                    if (typeof ws.openSession !== 'function') return 'no-method';
+                                    ws.openSession(sessionId);
+                                    // 导航是异步的（retain + selection）：稍后读一次当前会话，
+                                    // 区分「控制器已切换、界面没刷新」与「调用被忽略」。
+                                    setTimeout(() => {
+                                        try {
+                                            var ui = ctx.get('uiSession');
+                                            var snap =
+                                                ui && ui.current && ui.current.getSnapshot
+                                                    ? ui.current.getSnapshot()
+                                                    : null;
+                                            var sessionsSvc = ctx.get('sessions');
+                                            var list =
+                                                sessionsSvc && sessionsSvc.list
+                                                    ? sessionsSvc.list.getSnapshot()
+                                                    : null;
+                                            postDebug({
+                                                event: 'after-open',
+                                                target: String(sessionId).slice(0, 24),
+                                                uiCurrent: snap ? snap.key || snap.sessionId || null : null,
+                                                listCurrent: (list && list.current) || null,
+                                                inList: !!(list && list.byId && list.byId[sessionId]),
+                                            });
+                                        } catch (e) {
+                                            postDebug({ event: 'after-open', error: String(e) });
+                                        }
+                                    }, 700);
+                                    return 'ok';
+                                } catch (e) {
+                                    return 'error:' + ((e && e.message) || e);
+                                }
+                            },
                             ...ownerProps,
                         })
                 );
@@ -5806,6 +7320,21 @@ window.__ModuleLoader__.load({
             formatMeterText,
             meterAmountText,
             formatClock,
+            // 余额提示纯函数
+            BALANCE_ALERT_STORAGE_KEY,
+            DEFAULT_BALANCE,
+            normalizeDecimal,
+            decimalCompare,
+            addDecimal,
+            thresholdOf,
+            sourceKey,
+            evaluateBalanceAlerts,
+            mergeWalletBalances,
+            readAlertStore,
+            writeAlertStore,
+            setSourceState,
+            sourceStateOf,
+            formatBalanceAlert,
             animName,
             normalizeAnimId,
             animFacingTransform,
@@ -5848,7 +7377,20 @@ window.__ModuleLoader__.load({
             // 环境辅助（可见性 / 主从 / 上传探测）
             leaderRecordFresh,
             pageVisible,
+            pageFocused,
             POSTER_URL,
+            // 回合完成提示
+            DEFAULT_NOTIFY,
+            NOTIFY_KINDS,
+            classifyTurnEnd,
+            notifyDecision,
+            notifyQueueReducer,
+            formatNotifyText,
+            titleMark,
+            cardTtl,
+            notificationEnvironment,
+            createSystemNotifier,
+            createNotifierSound,
             probeVideoFile,
             customVideoWarnings,
             // 资源层

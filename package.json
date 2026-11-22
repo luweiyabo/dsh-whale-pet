@@ -21,7 +21,7 @@
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "build:check": "node scripts/build-client.mjs --check",
-    "check": "npm run build:check && node --check lib/index.js && node --check lib/client.js && node --check lib/balance-providers.js && node --check lib/deepseek-balance.js",
+    "check": "npm run build:check && node --check lib/index.js && node --check lib/client.js && node --check lib/balance-providers.js && node --check lib/deepseek-balance.js && node --check lib/balance-source.js",
     "format": "prettier --write src scripts lib test",
     "format:check": "prettier --check src scripts lib test",
     "test": "node --test",

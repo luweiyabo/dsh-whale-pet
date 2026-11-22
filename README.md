@@ -238,7 +238,7 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 | Node.js | `^22.19.0 \|\| >=24.0.0`（跟随 DSH 官方要求，见 DSH `package.json` 的 `engines.node`） |
 | pnpm | 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm |
 
-插件 `0.2.0` 在保留 DSH `0.1.x` 兼容的同时，新增对 DSH `0.2.0-rc.2` 及 `0.2.2-rc` 的支持（`0.2.2-rc.3` 已实测；预发布版需要显式声明范围，见下方说明）：`0.1.x` 沿用 `connection.api` / `connection.rpc`，`0.2.0-rc.2` 的设置读写改走 typert Remote 子服务 `remote.settings`，会话活动改由 `uiSession.sessionStatus` 提供，模型流式输出经 `assistant-stream` 帧归一化，设置卡片同时适配官方插件页槽位 `plugins.row.config`。会话事件订阅、模型选择、审批与问答等待状态在两种宿主上行为一致；断线后重建状态时不会把历史消息当作新事件触发规则。余额仍仅查询服务商官方接口，未配置凭据时会显示查询失败（失败时保留上次余额并标注时间）。
+插件 `0.2.0` 在保留 DSH `0.1.x` 兼容的同时，新增对 DSH `0.2.0-rc.2` 及 `0.2.2-rc` 的支持（`0.2.2-rc.3` 已实测；预发布版需要显式声明范围，见下方说明）：`0.1.x` 沿用 `connection.api` / `connection.rpc`，`0.2.0-rc.2` 的设置读写改走 typert Remote 子服务 `remote.settings`，会话活动改由 `uiSession.sessionStatus` 提供，模型流式输出经 `assistant-stream` 帧归一化，设置卡片同时适配官方插件页槽位 `plugins.row.config`。会话事件订阅、模型选择、审批与问答等待状态在两种宿主上行为一致；断线后重建状态时不会把历史消息当作新事件触发规则。余额来源按账户 / 套餐 / API-key 钱包分层：DeepSeek 账户免 API key，套餐不查钱包，API-key 钱包需显式授权；失败时保留上次余额并标注时间。
 
 **平台差异**：`webm` 的透明通道依赖 VP9-alpha，Chromium 内核与 Firefox 正常；Safari 与 iOS 上的所有浏览器（均为 WebKit）会把透明视频渲染成黑底，插件会自动切换成静态帧，动作仍照常切换，只是没有逐帧动画。
 
@@ -341,7 +341,7 @@ npm pack --dry-run
 
 进入 **设置 → 插件 → 鲸鱼桌宠**（或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
 
-- 显示、文字气泡和账户余额气泡
+- 显示、文字气泡、账户余额与低余额提醒（含 API-key 授权）
 - 交互动效（光标倾斜跟随、点击弹跳、拖拽挤压）
 - 宠物尺寸、默认角落和会话感知范围
 - 安静、均衡、活泼三档自主活跃程度
@@ -396,15 +396,31 @@ npm pack --dry-run
 - 与内置意图使用同一优先级仲裁机制
 - 新增本地时间（`time`，`HH:MM`）与星期（`dayOfWeek`，`0` = 周日）条件，配合「大于/小于」可写作息与周末规则
 
-### 账户余额气泡
+### 账户余额与低余额提醒
 
-开启 `meter` 后，宠物会根据当前会话实际调用的模型识别服务商，并显示服务商官方接口返回的账户余额。该功能不进行 Token 费用估算。
+开启 `meter` 显示余额；开启 `balance.alert` 在低于阈值时提醒。余额来源按以下顺序选择，**非必要不使用 API key**：
 
-- 自动读取 Harness 当前模型配置、凭据库及服务商默认环境变量
-- 支持 `DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`、`STEPFUN_API_KEY` 等现有凭据来源；也可在对应服务商设置里指定自定义 `apiKeyEnv` 凭据环境变量
-- 仅请求代码中配置的官方白名单端点；余额查询会把对应服务商的 API Key 发送到其官方接口（请求在本机服务端发起，仅用于余额查询）
-- 默认关闭
-- 服务商没有可用余额 API 时显示“当前服务商暂不支持”
+- **DeepSeek 账户**（已登录）：走 DSH 账户服务 `remote.account.getBalance`，不需要 API key；金额为充值 + 赠送合计。
+- **套餐 / 订阅**（Kimi Coding、GLM Coding、Qwen / Xiaomi Token Plan、ChatGPT Codex、GitHub Copilot 等）：显示“套餐/订阅计费，不适用余额查询”，不查钱包、不碰 key。
+- **API-key 钱包**（DeepSeek / Moonshot / StepFun）：只有在设置里显式打开「允许使用 API key 查询」后才查询；key 只在宿主使用，只发往对应服务商的官方余额端点。未知路由不猜。
+
+低余额提醒：
+
+- 按币种阈值（默认 CNY 20 / USD 3）；跌破只提醒一次，充值回到阈值以上后复位。
+- 提醒通道复用「回合提示」的系统通知 / 提示音 / 卡片；页面聚焦时出气泡。
+- 刷新间隔 `30s / 60s / 5min / 关闭`；右键「刷新余额」立即查询（宿主 3s 防抖）。
+- 代理：DSH 启动时读取 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`，插件使用普通 `fetch`，不另建代理。系统代理设置不生效；不支持 SOCKS；TLS 拦截代理需在启动前设置 `NODE_EXTRA_CA_CERTS`。
+- 默认关闭；不进行 Token 费用估算。旧配置已开启 `meter` 时，升级后需在设置里允许一次 API key 查询（0.2.0 未发布，不做自动授权）。
+
+### 回合完成提示
+
+回合结束、失败或等待你审批/回答时提醒；页面不可见时走系统通知，非安全上下文（局域网 http）退化为提示音 + 标签标题圆点。
+
+- 页面聚焦时：桌宠上方出气泡并联动动画；其他会话带会话名，点气泡切回该会话
+- 页面失焦/最小化：使用系统通知（Windows/macOS/Linux，Web 首次需允许浏览器通知；Desktop 免授权）
+- 系统通知不可用：播放短提示音 + 标题 `●`；回到前台补显卡片
+- 设置页「回合提示」：完成/失败/待确认/系统通知/提示音五个开关
+- 后台会话的回合不受「感知范围」限制，切走会话也能收到完成提示
 
 ## 动作配置
 
@@ -466,7 +482,7 @@ $DSH_HOME/whale-pet/actions/
 <details>
 <summary><strong>余额气泡显示“不支持”或“查询失败”</strong></summary>
 
-确认当前模型服务商提供公开余额 API，并检查 Harness 模型凭据或相应环境变量。部分服务商目前没有公开余额接口，这种情况属于正常降级。
+套餐/订阅显示“套餐/订阅计费”属正常；API-key 钱包显示“需要授权”时，在设置「账户余额」里开启允许。网络/代理错误请检查 DSH 启动时的 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`，TLS 拦截代理还需 `NODE_EXTRA_CA_CERTS`。
 
 </details>
 

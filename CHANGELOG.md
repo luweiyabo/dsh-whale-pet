@@ -2,6 +2,17 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- 回合完成提示：回合结束（完成/失败）或等待审批/回答时提醒。页面聚焦时在桌宠上方出气泡并联动动画（其他会话带会话名，点气泡切回）；页面失焦或最小化时走系统通知（Windows/macOS/Linux，Web 首次需允许浏览器通知，Desktop 免授权）；系统通知不可用时退化为提示音 + 标题圆点。Windows toast 使用短 tag，避免长标签被系统静默丢弃。
+- 设置卡片新增「回合提示」分区：完成 / 失败 / 待确认 / 系统通知 / 提示音五个开关，并显示当前环境的通知授权状态。
+- 通知感知与「感知范围」解耦：`scope=current` 时也会 follow 后台正在运行的会话，切走会话后仍能收到完成提示；回合统计改为按会话记账，多会话并行不再串数。
+- 余额来源分层：DeepSeek 账户走 `remote.account.getBalance`（免 API key）；Kimi Coding / GLM Coding / Qwen / Xiaomi Token Plan / Codex / Copilot 识别为套餐，不查钱包；API-key 钱包必须显式授权后才解析 key。修复 `kimi-coding` 被旧推断当成 Moonshot 钱包、`deepseek-account` 被当成 API-key 钱包的隐患。
+- 低余额提醒：按币种阈值（默认 CNY 20 / USD 3）跨阈值提醒一次，充值后复位；复用回合提示的系统通知 / 提示音 / 卡片。刷新间隔可配，右键「刷新余额」强制查询。
+- 余额查询代理与超时诊断：复用 DSH `dsh-http-proxy` 全局代理，超时放宽到 12 s，错误区分为 network / timeout / tls，并提示 `HTTPS_PROXY`、`NODE_EXTRA_CA_CERTS` 与 SOCKS 限制。
+
 ## [0.2.0] - 2026-11-16
 
 ### 新增

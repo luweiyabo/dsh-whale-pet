@@ -261,7 +261,7 @@ test('新版客户端挂载等待会话与 Remote 命名空间就绪', async () 
         },
         {}
     );
-    assert.deepEqual(Array.from(dependencies), ['sessions', 'remote', 'uiSession']);
+    assert.deepEqual(Array.from(dependencies), ['sessions', 'remote']);
     assert.equal(typeof mount, 'function');
 });
 

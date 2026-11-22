@@ -633,40 +633,48 @@ export function createActivitySystem({ normalizeAnimId }) {
                 publish();
                 return;
             }
-            // 多会话感知范围过滤（scope=current 时只收当前会话帧）
-            if (opts.filter && !opts.filter(frame)) return;
-            // request/context 携带本次真实 provider/model；assistant/message 携带 usage。
-            if (frame.type === 'session/event') {
+            // 通知与统计：不受感知范围（scope）限制——后台会话的完成提示依赖它。
+            // 这里先记账与派发，后面 filter 只影响意图/规则/余额这些"宠物行为"。
+            if (opts.onNotify) opts.onNotify(frame);
+            if (frame.type === 'session/event' && !frame.snapshot) {
                 var ev0 = frame.event || {};
-                if (
-                    opts.onModel &&
-                    (!frame.snapshot || ev0.type === 'model/selection') &&
-                    (ev0.type === 'request/context' || ev0.type === 'model/selection') &&
-                    ev0.data
-                )
-                    opts.onModel(ev0.data, frame.sessionId);
-                if (
-                    opts.onUsage &&
-                    !frame.snapshot &&
-                    ev0.type === 'assistant/message' &&
-                    ev0.data &&
-                    ev0.data.usage
-                )
-                    opts.onUsage(ev0.data.usage);
+                if (opts.onUsage && ev0.type === 'assistant/message' && ev0.data && ev0.data.usage)
+                    opts.onUsage(ev0.data.usage, frame.sessionId);
                 // 回合边界与工具调用：供用量/耗时统计（完成提示、本章统计气泡）
-                if (opts.onToolCall && !frame.snapshot && ev0.type === 'tool/call')
+                if (opts.onToolCall && ev0.type === 'tool/call')
                     opts.onToolCall((ev0.data && ev0.data.name) || '', frame.sessionId);
-                if (opts.onTurn && !frame.snapshot) {
+                if (opts.onTurn) {
                     if (ev0.type === 'turn/start')
-                        opts.onTurn({ phase: 'start', sessionId: frame.sessionId, at: Date.now() });
+                        opts.onTurn({
+                            phase: 'start',
+                            sessionId: frame.sessionId,
+                            at: Date.now(),
+                            seq: ev0.seq,
+                            turn: ev0.data && ev0.data.turn,
+                        });
                     else if (ev0.type === 'turn/end')
                         opts.onTurn({
                             phase: 'end',
                             sessionId: frame.sessionId,
                             at: Date.now(),
+                            seq: ev0.seq,
+                            turn: ev0.data && ev0.data.turn,
                             reason: ev0.data && ev0.data.reason,
                         });
                 }
+            }
+            // 多会话感知范围过滤（scope=current 时只收当前会话帧）
+            if (opts.filter && !opts.filter(frame)) return;
+            // request/context 携带本次真实 provider/model（余额只跟当前会话）
+            if (frame.type === 'session/event') {
+                var ev1 = frame.event || {};
+                if (
+                    opts.onModel &&
+                    (!frame.snapshot || ev1.type === 'model/selection') &&
+                    (ev1.type === 'request/context' || ev1.type === 'model/selection') &&
+                    ev1.data
+                )
+                    opts.onModel(ev1.data, frame.sessionId);
             }
             if (api.subscribeActivity) {
                 const next = applyFrame(
