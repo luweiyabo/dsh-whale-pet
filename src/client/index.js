@@ -19,6 +19,7 @@ import {
     decimalCompare,
     evaluateBalanceAlerts,
     formatBalanceAlert,
+    formatMoney,
     mergeWalletBalances,
     normalizeDecimal,
     readAlertStore,
@@ -772,7 +773,10 @@ window.__ModuleLoader__.load({
         /** 余额金额文案：US$ 12.34 · CNY 88.00 */
         function meterAmountText(balances) {
             if (!Array.isArray(balances) || !balances.length) return '';
-            return balances.map((item) => item.currency + ' ' + item.total).join(' · ');
+            // 展示固定两位小数；内部比较仍保留全精度
+            return balances
+                .map((item) => item.currency + ' ' + (formatMoney(item.total) || item.total))
+                .join(' · ');
         }
         /** 时间戳 → 本地 HH:MM（不用 locale API，避免不同宿主输出不一致） */
         function formatClock(ts) {

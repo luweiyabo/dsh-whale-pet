@@ -128,6 +128,28 @@ export function sourceKey(source, provider) {
     return String(source || 'unknown') + ':' + String(provider || 'unknown');
 }
 
+/**
+ * 金额展示格式：固定两位小数（四舍五入），如 18.25840318 → 18.26、20 → 20.00。
+ * 只用于展示；比较/求和仍走 normalizeDecimal + decimalCompare/addDecimal 的全精度字符串。
+ * @param {unknown} value
+ * @returns {string} 非法金额返回空串
+ */
+export function formatMoney(value) {
+    const normalized = normalizeDecimal(value);
+    if (normalized === null) return '';
+    const negative = normalized.charAt(0) === '-';
+    const abs = negative ? normalized.slice(1) : normalized;
+    const dot = abs.indexOf('.');
+    const int = dot === -1 ? abs : abs.slice(0, dot);
+    const frac = dot === -1 ? '' : abs.slice(dot + 1);
+    let minor = BigInt(int + frac.slice(0, 2).padEnd(2, '0'));
+    if (frac.length > 2 && frac.charAt(2) >= '5') minor += BigInt(1);
+    const whole = (minor / BigInt(100)).toString();
+    const cents = (minor % BigInt(100)).toString().padStart(2, '0');
+    const sign = negative && (whole !== '0' || cents !== '00') ? '-' : '';
+    return sign + whole + '.' + cents;
+}
+
 export function formatThreshold(value) {
     const n = Number(value);
     if (!Number.isFinite(n)) return '';
@@ -284,7 +306,7 @@ export function formatBalanceAlert(alerts, providerLabel, t) {
     const list = (alerts || []).slice(0, 2).map((alert) => {
         const line = tr('balanceAlertLine');
         return line
-            .replace('{amount}', alert.currency + ' ' + alert.total)
+            .replace('{amount}', alert.currency + ' ' + (formatMoney(alert.total) || alert.total))
             .replace('{threshold}', formatThreshold(alert.threshold));
     });
     if ((alerts || []).length > 2) list.push('…');

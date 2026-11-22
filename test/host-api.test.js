@@ -87,6 +87,32 @@ test('remote.account 适配为 api.account.getBalance，缺失时不暴露', asy
     assert.equal(without.account, undefined);
 });
 
+test('remote.account 的 { ok, value } 信封被拆开，失败信封转成异常', async () => {
+    const ready = { status: 'ready', value: [{ currency: 'CNY', balance: '18.25' }], bonusWallets: [] };
+    const wrapped = resolveHostApi(
+        { rpc: { call() {} } },
+        { remoteAccount: { getBalance: async () => ({ ok: true, value: ready }) } }
+    );
+    assert.deepEqual(await wrapped.account.getBalance({}), ready);
+
+    // 签出（value=null）也要保持 null，宠物侧据此显示"未登录"
+    const signedOut = resolveHostApi(
+        { rpc: { call() {} } },
+        { remoteAccount: { getBalance: async () => ({ ok: true, value: null }) } }
+    );
+    assert.equal(await signedOut.account.getBalance({}), null);
+
+    const failed = resolveHostApi(
+        { rpc: { call() {} } },
+        {
+            remoteAccount: {
+                getBalance: async () => ({ ok: false, error: { message: 'host exploded', code: 'EBOOM' } }),
+            },
+        }
+    );
+    await assert.rejects(failed.account.getBalance({}), /host exploded/);
+});
+
 test('会话 follow 只恢复未结束回合，转发实时事件并在断线后重建快照', async () => {
     const list = observable({ current: 's1', ids: ['s1'], byId: { s1: { running: true } } });
     const pending = observable(new Map([['s1', { key: 'approval:1', kind: 'approval' }]]));

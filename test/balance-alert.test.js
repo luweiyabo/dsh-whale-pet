@@ -7,6 +7,7 @@ import {
     emptyAlertStore,
     evaluateBalanceAlerts,
     formatBalanceAlert,
+    formatMoney,
     mergeWalletBalances,
     normalizeDecimal,
     readAlertStore,
@@ -169,6 +170,19 @@ test('提醒状态持久化：损坏 JSON / 版本不符 / 抛错都安全', () 
     assert.equal(writeAlertStore(null, store), false);
 });
 
+test('金额展示固定两位小数并四舍五入', () => {
+    assert.equal(formatMoney('18.2584031800000000'), '18.26');
+    assert.equal(formatMoney('17.74139186'), '17.74');
+    assert.equal(formatMoney('20'), '20.00');
+    assert.equal(formatMoney('12.5'), '12.50');
+    assert.equal(formatMoney('0.005'), '0.01');
+    assert.equal(formatMoney('0.004'), '0.00');
+    assert.equal(formatMoney('-0.005'), '-0.01');
+    assert.equal(formatMoney('0E-16'), '0.00');
+    assert.equal(formatMoney('1.2e+3'), '1200.00');
+    assert.equal(formatMoney('bad'), '');
+});
+
 test('提醒文案多币种合并、最多两个', () => {
     const text = formatBalanceAlert(
         [
@@ -183,5 +197,5 @@ test('提醒文案多币种合并、最多两个', () => {
             })[key] || key
     );
     assert.equal(text.title, '余额偏低');
-    assert.equal(text.body, 'DeepSeek 账户 · CNY 12.34（阈值 20.00） · USD 1.2（阈值 3.00）');
+    assert.equal(text.body, 'DeepSeek 账户 · CNY 12.34（阈值 20.00） · USD 1.20（阈值 3.00）');
 });

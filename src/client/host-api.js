@@ -29,6 +29,20 @@ function waitForSettings(getSettings, timeoutMs) {
     });
 }
 
+// 0.2.x 的 typert Remote「直接调用」同样把返回值包成 `{ ok, value }` 信封
+// （宿主调用失败时 `ok=false` + `error`），而 0.1.x 的旧适配层直接返回裸值。
+// 这里统一拆信封，调用方只看到裸结果（如 account.getBalance 的 ready / failed / null）。
+function unwrapRemoteResult(result) {
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) return result;
+    if (!Object.prototype.hasOwnProperty.call(result, 'ok')) return result;
+    if (result.ok !== true) {
+        const error = new Error((result.error && result.error.message) || 'Host remote call failed');
+        error.code = (result.error && (result.error.code || result.error.name)) || 'REMOTE_FAILED';
+        throw error;
+    }
+    return result.value;
+}
+
 // 0.2.0 typert Remote 子服务适配：direct 方法返回 { ok, value, error } 信封，
 // describe() → { ok:true, value:{ writable, hasDocument, namespaces } }。
 // 内部契约保持旧形状 { result:{ ok, value:{ namespaces } } }，供 createConfigStore 复用。
@@ -127,10 +141,12 @@ export function resolveHostApi(connection, services = {}) {
     }
     // account 余额走 Remote（账户登录态），不经过 API-key 路由；
     // 软获取失败时不暴露该方法，由宠物侧显示 account-unavailable。
+    // 最近版 typert Remote 的直接调用返回 `{ ok, value }` 信封（旧宿主返回裸值）；
+    // 这里拆掉信封，避免把 `{ ok, value }` 误判成 `{ status: 'failed' }` 而报"账户查询失败"。
     if (remoteAccount && typeof remoteAccount.getBalance === 'function') {
         api.account = {
             getBalance(metadata) {
-                return remoteAccount.getBalance(metadata);
+                return Promise.resolve(remoteAccount.getBalance(metadata)).then(unwrapRemoteResult);
             },
         };
     }
