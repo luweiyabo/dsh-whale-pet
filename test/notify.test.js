@@ -341,6 +341,54 @@ test('系统通知：发送成功、点击回调关闭、同 tag 限流、构造
     assert.equal(broken.send({ title: 'x' }), false);
 });
 
+test('系统通知：展示阶段 onerror 视为未发送，回滚限流记账并触发降级回调', () => {
+    const FakeNotification = fakeNotification('granted');
+    let clock = 0;
+    const failures = [];
+    const notifier = createSystemNotifier({
+        scope: { isSecureContext: true },
+        Notification: FakeNotification,
+        now: () => clock,
+    });
+    assert.equal(notifier.send({ title: '完成', tag: 't', onFail: () => failures.push(clock) }), true);
+    const first = FakeNotification.created.at(-1);
+    assert.equal(typeof first.onerror, 'function', '应绑定 onerror 感知展示失败');
+    // 构造成功不代表已展示：平台在展示阶段失败会触发 onerror
+    clock = 100;
+    first.onerror();
+    assert.deepEqual(failures, [100], 'onerror 应触发一次降级回调（调用方补提示音/标题）');
+    // 本次实际上没展示：不能占用同 tag 的 3s 限流配额，应立即允许重发
+    clock = 200;
+    assert.equal(notifier.send({ title: 'retry', tag: 't' }), true);
+    // 同一次发送重复 onerror 不重复降级（已标记为未发送）
+    first.onerror();
+    assert.deepEqual(failures, [100]);
+});
+
+test('系统通知：环境不支持 onerror 时保持同步成功行为，不影响返回值', () => {
+    class NoOnError {
+        static permission = 'granted';
+        static requestPermission() {
+            return Promise.resolve('granted');
+        }
+        constructor() {
+            Object.defineProperty(this, 'onerror', {
+                set() {
+                    throw new Error('onerror unsupported');
+                },
+            });
+        }
+    }
+    const notifier = createSystemNotifier({
+        scope: { isSecureContext: true },
+        Notification: NoOnError,
+        now: () => 0,
+    });
+    let failures = 0;
+    assert.equal(notifier.send({ title: 'x', onFail: () => (failures += 1) }), true);
+    assert.equal(failures, 0);
+});
+
 test('isSecureScope：优先使用浏览器判定，缺失时按 localhost 兜底', () => {
     assert.equal(isSecureScope({ isSecureContext: true }), true);
     assert.equal(isSecureScope({ isSecureContext: false }), false);

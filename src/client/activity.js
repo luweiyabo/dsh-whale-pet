@@ -60,7 +60,7 @@ export function createActivitySystem({ normalizeAnimId }) {
     };
 
     // 意图状态：{ active: {intent: 最近活跃时间戳}, toolCounts: {intent: 计数},
-    //            stepTools: {'turn:step': [intent,...]}, running: bool }
+    //            stepTools: {'call:<callId>'|'turn:step': [intent,...]}, running: bool }
     var emptyIntentState = () => ({ active: {}, toolCounts: {}, stepTools: {}, running: false });
 
     // 从活跃集合取最高优先级意图（无 → IDLE）。ruleMeta：规则元数据
@@ -88,9 +88,34 @@ export function createActivitySystem({ normalizeAnimId }) {
     //   mux:   { type:'session/event', event } | { type:'approval/requested' } |
     //          { type:'approval/resolved' } | { type:'question/requested' } |
     //          { type:'question/resolved' } | { type:'session/queue' }
+    // tool/call 与 tool/result 的配对键。DSH 0.2.2 的真实形状：
+    //   tool/call   data = { turn, step, callId, name, arguments }
+    //   tool/result data = { turn, step, message: ToolResultMessage, error?, meta? }
+    // 其中 ToolResultMessage 的调用 ID 在顶层 message.toolCallId；0.1.x/0.2.0
+    // 宿主可能把 toolCallId 放在 message.content[0] 里，一并兼容。
+    // 两者都没 ID 时退回 turn:step（同一 turn/step 内工具串行，可安全配对）。
     function toolKey(data) {
-        const callId = data.callId || data.message?.content?.[0]?.toolCallId;
-        return callId ? 'call:' + callId : data.turn + ':' + data.step;
+        const d = data || {};
+        const callId = d.callId || d.message?.toolCallId || d.message?.content?.[0]?.toolCallId;
+        return callId ? 'call:' + callId : d.turn + ':' + d.step;
+    }
+    // 工具结果是否失败：0.2.2 看 ToolResultMessage 顶层 message.isError；
+    // 旧宿主看 data.error 或 message.content[0].isError（三处都是布尔/对象真值）。
+    function toolResultFailed(data) {
+        const d = data || {};
+        return !!d.error || d.message?.isError === true || d.message?.content?.[0]?.isError === true;
+    }
+    // 该帧是否「激活」ERROR 脉冲（保持窗口需要从这次重新计时）。
+    // 与 applyFrame 的错误判定保持同一套规则：host/agent-error、失败的工具结果、
+    // 以 error 结束的回合。
+    function frameTouchesError(frame) {
+        if (!frame) return false;
+        if (frame.type === 'host/agent-error') return true;
+        if (frame.type !== 'session/event') return false;
+        const ev = frame.event || {};
+        if (ev.type === 'tool/result') return toolResultFailed(ev.data || {});
+        if (ev.type === 'turn/end') return ev.data?.reason?.kind === 'error';
+        return false;
     }
     function applyFrame(state, frame, now) {
         var next = {
@@ -148,7 +173,8 @@ export function createActivitySystem({ normalizeAnimId }) {
             }
             if (ev.type === 'tool/call') {
                 clear(INTENT.LISTENING);
-                // 模型请求工具：分类意图 + 按 turn:step 记账（tool/result 无工具名，靠此配对）
+                // 模型请求工具：分类意图 + 按调用键记账（callId / turn:step，
+                // tool/result 自身不带工具名，靠它配对，见 toolKey）
                 var ti = TOOL_INTENTS[d.name] || null;
                 touch(INTENT.WORKING);
                 if (ti) {
@@ -163,8 +189,8 @@ export function createActivitySystem({ normalizeAnimId }) {
                 return next;
             }
             if (ev.type === 'tool/result') {
-                if (d.error || d.message?.content?.[0]?.isError) touch(INTENT.ERROR);
-                // 消退该 turn:step 最近一次调用的工具意图
+                if (toolResultFailed(d)) touch(INTENT.ERROR);
+                // 消退该调用键最近一次调用的工具意图（0.2.2：message.toolCallId 配对）
                 var key = toolKey(d);
                 var arr = next.stepTools[key];
                 if (arr && arr.length) {
@@ -235,7 +261,6 @@ export function createActivitySystem({ normalizeAnimId }) {
     var intentActionIsOnce = (intent) => intent !== INTENT.IDLE;
     var RULE_MIN_COOLDOWN_MS = 1000;
     var RULE_MAX_COOLDOWN_MS = 3600000;
-    var RULE_MAX_COUNT = 50;
     // gt/lt 为数值比较（时间字段按「当日分钟数」比较，见 toComparable）
     var COND_OPS = ['eq', 'ne', 'contains', 'regex', 'exists', 'gt', 'lt'];
     var RULE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -366,7 +391,8 @@ export function createActivitySystem({ normalizeAnimId }) {
     }
 
     // 传感器帧 → 规则匹配用规范化帧（统一形状 + toolName 增强：
-    // tool/result 帧本身无工具名，从 turn:step 配对表回查上一次 tool/call）
+    // tool/result 帧本身无工具名，按调用键（callId / turn:step）从配对表回查
+    // 上一次 tool/call，见 toolKey）
     function ruleFrameOf(frame, lastToolByStep, now) {
         var ev = (frame && frame.event) || {};
         // 时间维度：本地时钟 HH:MM 与星期（0=周日）。规则里可直接写
@@ -392,7 +418,7 @@ export function createActivitySystem({ normalizeAnimId }) {
     }
 
     // 规则集匹配（纯函数）：返回 { fired: 命中规则数组, state: 新规则状态 }。
-    // state = { lastFired: {id: ts}, lastToolByStep: {'turn:step': name} }。
+    // state = { lastFired: {id: ts}, lastToolByStep: {'call:<callId>'|'turn:step': name} }。
     // cooldown 在此钳制（双保险：normalizeRule 已钳，手写数据再兜一次）。
     function matchRules(rules, frame, state, now) {
         var st = state || { lastFired: {}, lastToolByStep: {} };
@@ -438,6 +464,8 @@ export function createActivitySystem({ normalizeAnimId }) {
 
     // 规则清洗（手写 settings.yaml / 旧版数据 → 安全形状）。非法（id 不合规、
     // 条件缺字段、op 不在白名单、regex 编译失败）→ 整条丢弃返回 null。
+    // 数量不设上限：宿主 schema 没有条件/动作数量约束，静默截断会让用户
+    // 「保存后少了几条」，且下一次任意保存会把裁掉的内容持久化；只做逐条校验。
     // 注意：actions 不按 animEntry 过滤（自定义动作清单可能晚于设置加载），
     // 悬空 id 由运行时 onIntent 的池过滤兜底。
     function normalizeRule(r) {
@@ -445,7 +473,7 @@ export function createActivitySystem({ normalizeAnimId }) {
         if (typeof r.id !== 'string' || !RULE_ID_RE.test(r.id)) return null;
         var when = [];
         if (Array.isArray(r.when)) {
-            for (var i = 0; i < r.when.length && when.length < 10; i++) {
+            for (var i = 0; i < r.when.length; i++) {
                 var c = r.when[i];
                 if (!c || typeof c !== 'object') return null;
                 if (typeof c.field !== 'string' || !c.field || c.field.length > 128) return null;
@@ -471,7 +499,7 @@ export function createActivitySystem({ normalizeAnimId }) {
         if (!when.length) return null;
         var acts = [];
         if (Array.isArray(r.actions)) {
-            for (var k = 0; k < r.actions.length && acts.length < 5; k++) {
+            for (var k = 0; k < r.actions.length; k++) {
                 var id = normalizeAnimId(String(r.actions[k]));
                 if (id && id.length <= 64) acts.push(id);
             }
@@ -499,7 +527,8 @@ export function createActivitySystem({ normalizeAnimId }) {
         if (!Array.isArray(list)) return [];
         var out = [];
         var seen = {}; // id 去重：重复 id 会让 ruleMeta/冷却记账串扰，保留首条
-        for (var i = 0; i < list.length && out.length < RULE_MAX_COUNT; i++) {
+        // 不按数量截断（宿主 schema 无上限；截断会静默丢用户规则）
+        for (var i = 0; i < list.length; i++) {
             var r = normalizeRule(list[i]);
             if (r && !seen[r.id]) {
                 seen[r.id] = true;
@@ -585,7 +614,7 @@ export function createActivitySystem({ normalizeAnimId }) {
     //   - host 流：会话运行状态翻转、Agent 出错
     //   - mux 流：会话事件透传（tool/call、assistant/chunk…）+ 审批/问答帧
     // 帧 → applyFrame（纯函数）→ 活跃集合 → onState 回调（仲裁器消费）。
-    // ERROR 为"脉冲"意图：激活 3 秒后自动消退（errorHoldMs）。
+    // ERROR 为"脉冲"意图：激活 errorHoldMs 后自动消退；反复出错会重置保持窗口。
     // 流结束（非主动 abort）→ 2 秒后重开（断线重连）。
     // 返回清理函数：abort 流 + 清定时器。
     // @returns {() => void} dispose
@@ -779,8 +808,12 @@ export function createActivitySystem({ normalizeAnimId }) {
                 }
             }
             // ERROR 脉冲：激活后 errorHoldMs 自动消退（动态读 opts；支持函数——
-            // 传入 arbOptsRef 读取器，设置自动保存即热生效，无需重建事件流）
-            if (state.active[INTENT.ERROR] && !errorTimer) {
+            // 传入 arbOptsRef 读取器，设置自动保存即热生效，无需重建事件流）。
+            // 每次「错误激活」（agent-error / 失败工具结果 / 错误回合结束）都先清旧
+            // timer 再重新计时：3 秒内连续出错，保持窗口从最后一次重新开始，不会被
+            // 第一次的 timer 提前清掉。
+            if (state.active[INTENT.ERROR] && (!errorTimer || frameTouchesError(frame))) {
+                if (errorTimer) clearTimeout(errorTimer);
                 var holdMs = typeof opts.errorHoldMs === 'function' ? opts.errorHoldMs() : opts.errorHoldMs;
                 errorTimer = setTimeout(clearError, holdMs ?? 3000);
             }

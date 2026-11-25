@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveHostApi, subscribeSessionActivity } from '../src/client/host-api.js';
+import {
+    createRemoteSessionGetter,
+    createSettingsGetter,
+    resolveHostApi,
+    subscribeSessionActivity,
+} from '../src/client/host-api.js';
 
 function observable(initial) {
     let value = initial;
@@ -353,4 +358,131 @@ test('子代理会话判定：列表行缺 origin 时回落到 sessions.subagent
 test('子代理会话判定：没有 sessions 服务（旧宿主）时不暴露该方法', () => {
     const api = resolveHostApi({ rpc: { call() {} } }, { remote: { session: {} } });
     assert.equal(api.isSubagentSession, undefined);
+});
+
+// ---- remote.settings 取法（0.2.2 traced 子服务） ---------------------------
+// 0.2.2 起 remote 的子命名空间是 traced service：属性访问（ctx.remote.settings /
+// ctx.get('remote').settings）会被转成 `ctx['remote.settings']` 并走 ctx 的 inject
+// 守卫，客户端半侧没注入该命名空间时抛错。服务名读取（ctx.get）不受守卫约束，
+// 必须先试；否则设置面板会等满超时后显示"无法读取设置"。
+function settingsNamespace() {
+    return {
+        async describe() {
+            return {
+                ok: true,
+                value: { namespaces: [{ ns: 'whale-pet', value: { visible: true }, revision: 0 }] },
+            };
+        },
+        async update() {
+            return { ok: true, value: {} };
+        },
+    };
+}
+
+test('traced remote.settings 属性访问被 inject 守卫拒绝时，改用服务名读取', async () => {
+    const settings = settingsNamespace();
+    const ctx = {
+        get(name) {
+            return name === 'remote.settings' ? settings : undefined;
+        },
+    };
+    const guardedRemote = new Proxy(
+        {},
+        {
+            get() {
+                throw new Error('cannot get property "settings" without inject');
+            },
+        }
+    );
+    const getSettings = createSettingsGetter(ctx, guardedRemote);
+    assert.equal(getSettings(), settings, '属性访问抛错不能挡住服务名读取的结果');
+
+    const api = resolveHostApi({}, { modern: true, getSettings });
+    const result = await api.settings.describe();
+    assert.equal(result.result.ok, true);
+    assert.equal(result.result.value.namespaces[0].ns, 'whale-pet');
+});
+
+test('旧宿主没有 remote.settings 服务名时，回落到属性访问', () => {
+    const settings = settingsNamespace();
+    const ctx = {
+        get() {
+            throw new Error('cannot get property "remote.settings" without inject');
+        },
+    };
+    assert.equal(createSettingsGetter(ctx, { settings })(), settings);
+});
+
+test('设置服务始终不可用时超时返回失败信封，面板据此显示"无法读取设置"', async (t) => {
+    t.mock.method(console, 'warn', () => {});
+    const ctx = { get: () => undefined };
+    const api = resolveHostApi(
+        {},
+        { modern: true, settingsTimeoutMs: 20, getSettings: createSettingsGetter(ctx, undefined) }
+    );
+    const result = await api.settings.describe();
+    assert.equal(result.result.ok, false, '服务始终缺失时 describe 必须回失败信封而不是抛错');
+    assert.equal(result.result.value, null);
+});
+
+// ---- remote.session / uiSession 取法（0.2.2 惰性服务） --------------------
+// 与 remote.settings 同规则：属性访问会撞 Cordis 的 inject 守卫，服务名读取不受限；
+// 且这些服务可能晚于挂载就绪，必须惰性读取而不是 mount 时抓快照。
+test('traced remote.session 属性访问被 inject 守卫拒绝时，改用服务名读取', () => {
+    const session = { follow() {} };
+    const ctx = {
+        get(name) {
+            return name === 'remote.session' ? session : undefined;
+        },
+    };
+    const guardedRemote = new Proxy(
+        {},
+        {
+            get() {
+                throw new Error('cannot get property "session" without inject');
+            },
+        }
+    );
+    assert.equal(createRemoteSessionGetter(ctx, guardedRemote)(), session);
+});
+
+test('旧宿主没有 remote.session 服务名时，回落到属性访问', () => {
+    const session = { follow() {} };
+    const ctx = {
+        get() {
+            throw new Error('cannot get property "remote.session" without inject');
+        },
+    };
+    assert.equal(createRemoteSessionGetter(ctx, { session })(), session);
+});
+
+test('uiSession 是惰性 getter：服务晚于 resolveHostApi 就绪时也能读到', () => {
+    let service;
+    const api = resolveHostApi(
+        {},
+        {
+            modern: true,
+            getSettings: () => ({ describe() {}, update() {} }),
+            getUiSession: () => service,
+        }
+    );
+    assert.equal(api.uiSession, undefined, '服务未就绪时不应抛出，也不应伪造');
+    const current = { getSnapshot: () => ({ key: 's1' }), subscribe: () => () => {} };
+    service = { current };
+    assert.equal(api.uiSession, service, '服务就绪后同一个 api 对象应能读到');
+});
+
+test('settings.update 失败时保留宿主错误码，供调用方区分并发冲突', async () => {
+    const svc = {
+        describe: async () => ({ ok: true, value: { namespaces: [] } }),
+        update: async () => ({
+            ok: false,
+            error: { code: 'settings/conflict', message: 'settings namespace changed since it was read' },
+        }),
+    };
+    const api = resolveHostApi({}, { modern: true, getSettings: () => svc });
+    await assert.rejects(
+        api.settings.update({ ns: 'whale-pet', patch: { visible: false }, expectedRevision: 1 }),
+        (error) => error.code === 'settings/conflict'
+    );
 });

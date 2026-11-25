@@ -238,6 +238,122 @@ test('Codex 日志文件 mtime 很旧时丢弃已过期的 reset', async () => {
     }
 });
 
+test('Codex 窗口过期判定：采样时刻超过窗口长度即丢弃该窗口 usedPct', () => {
+    const now = Date.now();
+    const twoHoursOld = normalizeCodexRateLimits(
+        {
+            primary: { used_percent: 50, window_minutes: 300 },
+            secondary: { used_percent: 27, window_minutes: 10080 },
+        },
+        { nowMs: now - 2 * 3_600_000 }
+    );
+    assert.deepEqual(
+        twoHoursOld.windows.map((item) => [item.key, item.usedPct]),
+        [
+            ['rolling', 50],
+            ['weekly', 27],
+        ],
+        '2 小时前的日志仍在 5h / 周窗口内，保留 usedPct'
+    );
+    const sixHoursOld = normalizeCodexRateLimits(
+        {
+            primary: { used_percent: 50, window_minutes: 300 },
+            secondary: { used_percent: 27, window_minutes: 10080 },
+        },
+        { nowMs: now - 6 * 3_600_000 }
+    );
+    assert.deepEqual(
+        sixHoursOld.windows.map((item) => item.key),
+        ['weekly'],
+        '5h 窗口已过期，周窗口仍有效'
+    );
+    assert.equal(sixHoursOld.expiredWindows, 1, '过期窗口数单独统计，不混进 windows');
+    const allStale = normalizeCodexRateLimits(
+        {
+            primary: { used_percent: 50 },
+            secondary: { used_percent: 27 },
+        },
+        { nowMs: now - 8 * 24 * 3_600_000 }
+    );
+    assert.deepEqual(allStale.windows, [], '全部窗口过期时返回空数组');
+    assert.equal(allStale.expiredWindows, 2);
+    assert.equal(normalizeCodexRateLimits(null, { nowMs: now }), null);
+    assert.equal(
+        normalizeCodexRateLimits({}, { nowMs: now }),
+        null,
+        '没有 primary/secondary 数据视为没有额度信息'
+    );
+});
+
+test('Codex rate-limit 事件自身时间戳过期时不返回 usedPct（即使文件 mtime 很新）', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wp-codex-event-time-'));
+    const dir = join(root, 'sessions', '2026', '11', '22');
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, 'rollout-event-time.jsonl');
+    const stale = new Date(Date.now() - 6 * 3_600_000).toISOString();
+    await writeFile(
+        file,
+        [
+            JSON.stringify({ type: 'event' }),
+            JSON.stringify({
+                timestamp: stale,
+                type: 'event_msg',
+                payload: { rate_limits: { primary: { used_percent: 50, window_minutes: 300 } } },
+            }),
+        ].join('\n')
+    );
+    // 文件 mtime 是新的（之后又追加过别的事件），但 rate_limits 事件本身是 6h 前
+    const previous = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = root;
+    try {
+        const result = await readCodexQuota();
+        assert.equal(result.ok, true);
+        assert.deepEqual(result.windows, [], '超过 5h 窗口长度：不把 50% 当当前值');
+        assert.equal(result.expired, true);
+        assert.ok(Math.abs(result.at - Date.parse(stale)) < 1000, 'at 保留采样时刻');
+    } finally {
+        if (previous === undefined) delete process.env.CODEX_HOME;
+        else process.env.CODEX_HOME = previous;
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('Codex 日志全部窗口过期时返回 windows: [] 与 at 采样时间', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wp-codex-all-stale-'));
+    const dir = join(root, 'sessions', '2026', '11', '22');
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, 'rollout-all-stale.jsonl');
+    await writeFile(
+        file,
+        JSON.stringify({
+            type: 'event',
+            payload: {
+                rate_limits: {
+                    primary: { used_percent: 50 },
+                    secondary: { used_percent: 27 },
+                },
+            },
+        })
+    );
+    // 8 天前的日志：5h 与周默认窗口长度都已超过
+    const old = new Date(Date.now() - 8 * 24 * 3_600_000);
+    await utimes(file, old, old);
+    const previous = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = root;
+    try {
+        const result = await readCodexQuota();
+        assert.equal(result.ok, true);
+        assert.deepEqual(result.windows, []);
+        assert.equal(result.expired, true);
+        assert.equal(result.provider, 'codex');
+        assert.ok(Math.abs(result.at - old.getTime()) < 5000, 'at 保留日志采样时刻');
+    } finally {
+        if (previous === undefined) delete process.env.CODEX_HOME;
+        else process.env.CODEX_HOME = previous;
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 test('额度接口先按 HTTP 状态分类错误，非 JSON 正文不抛解析异常', async () => {
     const original = globalThis.fetch;
     const respond =
@@ -269,14 +385,17 @@ test('额度接口先按 HTTP 状态分类错误，非 JSON 正文不抛解析�
     }
 });
 
-test('所有额度厂商都有固定端点和至少一个窗口定义', () => {
+test('所有额度厂商都有固定端点；HTTP 厂商有至少一个窗口定义', () => {
     for (const [id, def] of Object.entries(QUOTA_PROVIDERS)) {
         assert.equal(def.id, id);
         assert.ok(def.label);
-        assert.ok(Array.isArray(def.windows) && def.windows.length > 0);
         if (def.kind === 'http') {
             assert.match(def.url, /^https:\/\//);
             assert.ok(Array.isArray(def.refs) && def.refs.length > 0);
+            assert.ok(Array.isArray(def.windows) && def.windows.length > 0);
+        } else {
+            // 本地厂商（Codex）的窗口来自日志里的 rate_limits，不维护静态窗口元数据
+            assert.equal(def.windows, undefined, id + ' 不应保留从未被读取的 windows 元数据');
         }
     }
 });

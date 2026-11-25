@@ -1,6 +1,6 @@
 {
   "name": "@luweiyabo/dsh-whale-pet",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A floating whale desktop pet for the DeepSeek Harness Web UI: 95 categorized animations, event-aware actions, custom uploads, click reactions, dragging and screen wandering.",
   "keywords": [
     "dsh",
@@ -16,6 +16,7 @@
   ],
   "type": "module",
   "engines": {
+    "dsh": "^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
@@ -25,7 +26,7 @@
     "format": "prettier --write src scripts lib test",
     "format:check": "prettier --check src scripts lib test",
     "test": "node --test",
-    "prepublishOnly": "npm run check && npm run format:check && npm test"
+    "prepublishOnly": "npm run check && npm run format:check && npm test && node scripts/check-pack.mjs"
   },
   "main": "lib/index.js",
   "exports": {
@@ -37,12 +38,14 @@
   },
   "files": [
     "lib",
-    "assets",
+    "assets/thumb",
+    "assets/icon.png",
     "locale/*.json",
     "cordis.patch.yml",
     "README_EN.md",
     "THIRD_PARTY_ASSETS.md",
-    "THIRD_PARTY_ASSETS_EN.md"
+    "THIRD_PARTY_ASSETS_EN.md",
+    "ASSET-LICENSE.md"
   ],
   "icon": "./assets/icon.png",
   "license": "SEE LICENSE IN LICENSE",
@@ -59,29 +62,16 @@
     "access": "public"
   },
   "dsh": {
-    "compatibility": {
-      "dsh": "^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
-      "node": "^22.19.0 || >=24.0.0",
-      "platform": "web",
-      "externalCredentials": "optional"
-    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-runtime"
-      ],
       "platform": "web"
     }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1 || ^4.0.4",
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6 || ^0.1.2-rc.1 || ^0.2.0-rc.2 || ^0.2.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.4",

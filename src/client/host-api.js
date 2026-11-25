@@ -3,13 +3,62 @@
 //   - 0.1.2     ：connection.rpc.call → settings/describe|update + sessions/remote/uiSession
 //   - 0.2.0     ：无 connection，设置走 typert Remote 子服务 remote.settings（惰性等待）
 // 会话活动订阅在任一具备 sessions.list + remote.session 的世代都接线。
+// 设置命名空间的最小面：describe + update 都在，才当作可用的设置服务。
+function isSettingsService(value) {
+    return !!value && typeof value.describe === 'function' && typeof value.update === 'function';
+}
+
 function settingsOf(getSettings) {
     try {
         const s = getSettings();
-        return s && typeof s.describe === 'function' && typeof s.update === 'function' ? s : null;
+        return isSettingsService(s) ? s : null;
     } catch {
         return null;
     }
+}
+
+// remote.settings 的取法。0.2.2 起 remote 的子命名空间是 traced service：
+// 属性访问（ctx.remote.settings / ctx.get('remote').settings）会被转成
+// `ctx['remote.settings']` 并走 ctx 的 inject 守卫，客户端半侧没在 inject 里声明
+// remote.settings 时会抛 `cannot get property "remote.settings" without inject`。
+// 因此必须先试不需要注入的服务名读取，属性访问只作为旧宿主（0.2.0 及更早）的兜底，
+// 且属性访问抛错不能挡住服务名读取。
+export function createSettingsGetter(ctx, remote) {
+    return () => {
+        try {
+            const direct = ctx.get('remote.settings');
+            if (isSettingsService(direct)) return direct;
+        } catch {
+            /* 旧宿主没有该服务名 */
+        }
+        try {
+            const fallback = remote ? remote.settings : undefined;
+            if (isSettingsService(fallback)) return fallback;
+        } catch {
+            /* inject 守卫拒绝：交给 waitForSettings 的超时兜底 */
+        }
+        return undefined;
+    };
+}
+
+// remote.session 的取法（与 remote.settings 同规则）：先服务名、再属性访问兜底。
+// mount 时就固定一份快照会踩到和设置一样的时序问题——命名空间服务晚于挂载就绪时，
+// 事件流订阅会整个页面生命周期缺失；因此这里返回惰性取值函数。
+export function createRemoteSessionGetter(ctx, remote) {
+    return () => {
+        try {
+            const direct = ctx.get('remote.session');
+            if (direct) return direct;
+        } catch {
+            /* 旧宿主没有该服务名 */
+        }
+        try {
+            return remote ? remote.session : undefined;
+        } catch {
+            /* inject 守卫拒绝 */
+        }
+        return undefined;
+    };
 }
 
 // remote.settings 是远端连接建立后才就绪的子服务，快速重载/刷新时可能晚于 apply。
@@ -22,7 +71,14 @@ function waitForSettings(getSettings, timeoutMs = 15000) {
         const poll = () => {
             const svc = settingsOf(getSettings);
             if (svc) return resolve(svc);
-            if (Date.now() - started >= timeoutMs) return resolve(null);
+            if (Date.now() - started >= timeoutMs) {
+                // 不静默失败：设置服务始终没就绪时，面板只能显示"无法读取设置"，
+                // 控制台留下一条可定位的日志（取法/宿主版本问题都从这里看）。
+                console.warn(
+                    `[whale-pet] host settings service was not ready after ${timeoutMs}ms; the settings page cannot load`
+                );
+                return resolve(null);
+            }
             setTimeout(poll, 250);
         };
         poll();
@@ -65,7 +121,14 @@ function remoteSettingsAdapter(getSettings, timeoutMs) {
                 // host 侧签名 update(ns, patch, expectedRevision) 是严格元数校验，必须显式补足 3 个实参。
                 return svc.update(args.ns, args.patch, args.expectedRevision).then((r) => {
                     if (!r || r.ok !== true) {
-                        throw new Error((r && r.error && r.error.message) || 'Host settings update failed');
+                        // 保留宿主错误码：面板据此区分 settings/conflict（并发写）与普通失败，
+                        // 前者重读后重试，后者才报"保存失败"。
+                        const error = new Error(
+                            (r && r.error && r.error.message) || 'Host settings update failed'
+                        );
+                        error.code =
+                            (r && r.error && (r.error.code || r.error.name)) || 'SETTINGS_UPDATE_FAILED';
+                        throw error;
                     }
                     return r.value;
                 });
@@ -76,7 +139,17 @@ function remoteSettingsAdapter(getSettings, timeoutMs) {
 export function resolveHostApi(connection, services = {}) {
     if (connection?.api) return connection.api;
 
-    const { sessions, remote, remoteAccount, uiSession, getSettings, modern, modelDirectories } = services;
+    const {
+        sessions,
+        remote,
+        remoteAccount,
+        uiSession,
+        getSettings,
+        getRemoteSession,
+        getUiSession,
+        modern,
+        modelDirectories,
+    } = services;
 
     let call = null;
     let settings;
@@ -102,21 +175,49 @@ export function resolveHostApi(connection, services = {}) {
         return undefined;
     }
 
-    // remote.session 子服务在 0.2.0 需按服务名取（ctx.get('remote.session')），
-    // 直接读 remote.session 属性会被 cordis 的 inject 守卫拒绝。0.1.x 回落属性访问。
-    let remoteSession = services.remoteSession;
-    if (remoteSession === undefined && remote) {
-        try {
-            remoteSession = remote.session;
-        } catch {
-            remoteSession = undefined;
+    // remote.session / uiSession 都惰性读取：0.2.2 的子命名空间服务与 uiSession 可能
+    // 晚于插件挂载就绪，mount 时抓一次快照会让事件流/当前会话在整页生命周期内缺失。
+    const remoteSessionOverride = services.remoteSession;
+    const readRemoteSession = () => {
+        if (remoteSessionOverride !== undefined) return remoteSessionOverride;
+        if (typeof getRemoteSession === 'function') {
+            try {
+                const value = getRemoteSession();
+                if (value) return value;
+            } catch {
+                /* 旧宿主没有该服务名 */
+            }
         }
-    }
+        try {
+            return remote ? remote.session : undefined;
+        } catch {
+            /* inject 守卫拒绝 */
+        }
+        return undefined;
+    };
+    const readUiSession = () => {
+        if (uiSession !== undefined) return uiSession;
+        if (typeof getUiSession === 'function') {
+            try {
+                return getUiSession();
+            } catch {
+                return undefined;
+            }
+        }
+        return undefined;
+    };
 
     const api = { settings };
-    if (uiSession && uiSession.current && typeof uiSession.current.getSnapshot === 'function') {
-        api.uiSession = uiSession;
-    }
+    Object.defineProperty(api, 'uiSession', {
+        enumerable: true,
+        configurable: true,
+        get() {
+            const service = readUiSession();
+            return service && service.current && typeof service.current.getSnapshot === 'function'
+                ? service
+                : undefined;
+        },
+    });
     // 子代理（subagent）会话判定：宿主把子代理实现成独立的子会话，它们会出现在
     // 会话列表里（flattenLineage 按 parentId 缩进）、也会各自发 turn/end，
     // 但「用户在对话的会话」只有父会话 —— 子代理完成不该弹任何提示。
@@ -201,6 +302,7 @@ export function resolveHostApi(connection, services = {}) {
                 if (current) return { result: { ok: true, value: { current } } };
                 // 官方 modelCatalog 同时给出目录默认模型：新会话/投影尚未落盘时，
                 // 这里就是 UI 当前显示的选择，不需要等一次模型调用。
+                const remoteSession = readRemoteSession();
                 if (remoteSession && typeof remoteSession.modelCatalog === 'function') {
                     try {
                         const response = await remoteSession.modelCatalog();
@@ -216,28 +318,69 @@ export function resolveHostApi(connection, services = {}) {
                 return { result: { ok: true, value: { current: response.result.value.default } } };
             },
         };
-        if (remoteSession) {
-            api.subscribeActivity = (emit, options) =>
-                subscribeSessionActivity({ ...services, remoteSession }, emit, options);
-        }
+        // session 事件订阅：remote.session 惰性解析（命名空间可能晚于挂载就绪）。
+        // 0.1.x 宿主没有 remote.session 时，订阅内部会安全降级为空订阅。
+        api.subscribeActivity = (emit, options) =>
+            subscribeSessionActivity(
+                { ...services, remoteSession: readRemoteSession(), getRemoteSession: readRemoteSession },
+                emit,
+                options
+            );
     }
     return api;
 }
 
 // control 流由 sessions 服务维护。仅为当前/正在运行的会话开只读 follow，
 // 不下载全部历史，不激活 Agent，也不参与审批/问答的回答链。
-export function subscribeSessionActivity({ sessions, remote, remoteSession, uiSession }, emit, options = {}) {
-    // 0.2.0：remote.session 经 ctx.get('remote.session') 服务名取得（见 resolveHostApi）。
-    const follow = remoteSession ?? (remote ? remote.session : undefined);
+export function subscribeSessionActivity(
+    { sessions, remote, remoteSession, uiSession, getRemoteSession, getUiSession },
+    emit,
+    options = {}
+) {
+    // 0.2.0：remote.session 经 ctx.get('remote.session') 服务名取得（见 resolveHostApi）；
+    // 取值函数在每次打开/重连时重新解析，避免挂载时快照为空的会话流永久缺失。
+    const resolveFollow = () => {
+        if (typeof getRemoteSession === 'function') {
+            try {
+                const value = getRemoteSession();
+                if (value) return value;
+            } catch {
+                /* 旧宿主没有该服务名 */
+            }
+        }
+        try {
+            return remoteSession ?? (remote ? remote.session : undefined);
+        } catch {
+            /* inject 守卫拒绝 */
+        }
+        return undefined;
+    };
     const watches = new Map();
     let disposed = false;
+    // uiSession 也是惰性读取：0.2.2 里它晚于挂载就绪时，一次性快照会让审批/问答
+    // 与运行状态信号在整页生命周期内缺失。
+    const readUiSession = () => {
+        if (uiSession !== undefined) return uiSession;
+        if (typeof getUiSession === 'function') {
+            try {
+                return getUiSession();
+            } catch {
+                return undefined;
+            }
+        }
+        return undefined;
+    };
     // 0.1.2：uiSession.pendingInteractions（Map<id,{key,kind}>）。
     // 0.2.0：uiSession.sessionStatus（Map<id,{running,pendingInteraction:{key,kind}}>）。
-    const pending = uiSession?.pendingInteractions ?? uiSession?.sessionStatus;
-    const statusStore = uiSession?.sessionStatus;
+    const pendingStoreOf = () => {
+        const ui = readUiSession();
+        return ui ? (ui.pendingInteractions ?? ui.sessionStatus) : undefined;
+    };
+    const statusStoreOf = () => readUiSession()?.sessionStatus;
     // running 判定：0.2.0 以 uiSession.sessionStatus（Map<id,{running,...}>）为准；
     // 0.1.2 回落到 sessions.list.byId[id].running。
     const runningOf = (id, listSnapshot) => {
+        const statusStore = statusStoreOf();
         if (statusStore && typeof statusStore.getSnapshot === 'function') {
             const snap = statusStore.getSnapshot();
             const entry = snap && typeof snap.get === 'function' ? snap.get(id) : undefined;
@@ -250,12 +393,13 @@ export function subscribeSessionActivity({ sessions, remote, remoteSession, uiSe
         if (!disposed) emit(frame);
     };
     const interaction = (id, snapshot = true) => {
+        const pending = pendingStoreOf();
         if (!pending) return;
         const watch = watches.get(id);
         const raw = pending.getSnapshot().get(id);
         // 0.2.0：sessionStatus 条目是 {running,pendingInteraction,...}，交互在 pendingInteraction；
         // 0.1.2：pendingInteractions 条目本身就是交互 {key,kind}。
-        const current = statusStore ? raw?.pendingInteraction : raw;
+        const current = statusStoreOf() ? raw?.pendingInteraction : raw;
         if (!snapshot && watch.pending === current?.key) return;
         const kind = (current?.kind || watch.pendingKind) === 'approval' ? 'approval' : 'question';
         watch.pending = current?.key;
@@ -276,6 +420,10 @@ export function subscribeSessionActivity({ sessions, remote, remoteSession, uiSe
         try {
             const child = sessions.subagentAddress?.(id);
             const address = child ? { kind: 'subagent', ...child } : { kind: 'session', sessionId: id };
+            const follow = resolveFollow();
+            if (!follow || typeof follow.follow !== 'function') {
+                throw new Error('remote.session is not ready');
+            }
             for await (const frame of follow.follow(
                 { address, assistantStream: true, maxMessages: 1 },
                 controller.signal
@@ -347,7 +495,7 @@ export function subscribeSessionActivity({ sessions, remote, remoteSession, uiSe
     const reconcile = () => {
         const list = sessions.list.getSnapshot();
         // 0.1.2：list 快照含 current；0.2.0：list 不再含 current，改由 uiSession.current 提供。
-        const currentId = list.current ?? uiSession?.current?.getSnapshot?.()?.key;
+        const currentId = list.current ?? readUiSession()?.current?.getSnapshot?.()?.key;
         const ids = new Set(currentId ? [currentId] : []);
         // watchAllRunning：完成提示要收到的后台会话事件不受 scope 限制。
         // 只 follow「正在运行」的会话，idle 会话不订阅，避免无意义的历史拉取。
@@ -413,13 +561,17 @@ export function subscribeSessionActivity({ sessions, remote, remoteSession, uiSe
     };
     const unsubscribe = sessions.list.subscribe(reconcile);
     // 0.2.0：running 变更经 sessionStatus 发布，未必触发 sessions.list；需订阅它重算。
+    const statusStore = statusStoreOf();
     const unsubscribeStatus =
         statusStore && typeof statusStore.subscribe === 'function'
             ? statusStore.subscribe(() => reconcile())
             : null;
-    const unsubscribePending = pending?.subscribe(() => {
-        for (const id of watches.keys()) interaction(id, false);
-    });
+    const pending = pendingStoreOf();
+    const unsubscribePending = pending?.subscribe
+        ? pending.subscribe(() => {
+              for (const id of watches.keys()) interaction(id, false);
+          })
+        : null;
     reconcile();
     return () => {
         disposed = true;

@@ -51,14 +51,25 @@ const {
     failedAnims,
 } = plugin.__internals;
 
-// ---- 帧构造器（与官方 api.events 形状一致；turn:step 用于 tool/result 配对） ----
-const toolCall = (name, turn = 't1', step = 1) => ({
+// ---- 帧构造器（0.2.2 真实形状；tool/result 用 message.toolCallId 与 callId 配对） ----
+// 真实宿主：tool/call data = { turn, step, callId, name, arguments }
+//           tool/result data = { turn, step, message: ToolResultMessage, error?, meta? }
+// 其中 ToolResultMessage 顶层是 toolCallId / isError，content 里没有这两个字段。
+const toolCall = (name, { turn = 't1', step = 1, callId = 'call:' + name } = {}) => ({
     type: 'session/event',
-    event: { type: 'tool/call', data: { name, turn, step } },
+    event: { type: 'tool/call', data: { turn, step, callId, name, arguments: {} } },
 });
-const toolResult = (turn = 't1', step = 1, error) => ({
+const toolResult = ({ turn = 't1', step = 1, callId = 'call:bash', error, isError = false } = {}) => ({
     type: 'session/event',
-    event: { type: 'tool/result', data: error ? { turn, step, error } : { turn, step } },
+    event: {
+        type: 'tool/result',
+        data: {
+            turn,
+            step,
+            message: { role: 'tool', toolCallId: callId, isError, content: [{ type: 'text', text: '' }] },
+            ...(error ? { error: typeof error === 'string' ? { message: error } : error } : {}),
+        },
+    },
 });
 const chunk = () => ({ type: 'session/event', event: { type: 'assistant/chunk', data: {} } });
 const userMessage = () => ({ type: 'session/event', event: { type: 'user/message', data: {} } });
@@ -119,7 +130,13 @@ const BEHAVIOR_MATRIX = [
     ],
     [
         '工具执行失败 tool/result.error',
-        [toolCall('bash'), toolResult('t1', 1, 'boom')],
+        [toolCall('bash'), toolResult({ callId: 'call:bash', error: 'boom', isError: true })],
+        INTENT.ERROR,
+        ['jump_scare'],
+    ],
+    [
+        '工具结果 message.isError（无 error 字段）',
+        [toolCall('bash'), toolResult({ callId: 'call:bash', isError: true })],
         INTENT.ERROR,
         ['jump_scare'],
     ],
@@ -170,7 +187,7 @@ test('多意图并存时按优先级取最高（错误可抢占等待/工作）'
     // 去掉错误：等待用户压过写代码
     assert.equal(intentAfter(frames.slice(0, 2)), INTENT.WAITING_USER);
     // 工具结果无错正常消退：只剩 WORKING
-    assert.equal(intentAfter([toolCall('bash'), toolResult('t1', 1)]), INTENT.WORKING);
+    assert.equal(intentAfter([toolCall('bash'), toolResult({ callId: 'call:bash' })]), INTENT.WORKING);
 });
 
 // ============================================================================
@@ -204,7 +221,7 @@ test('感知→仲裁全链路：写代码→等待→倾听→思考→回合�
         { type: 'host/session-status', running: true }, // → WORKING
         toolCall('bash'), // → CODING（优先级 6 > 2）
         { type: 'approval/requested' }, // → WAITING_USER（8 > 6）
-        toolResult('t1', 1, 'boom'), // → ERROR（9 > 8）
+        toolResult({ callId: 'call:bash', error: 'boom', isError: true }), // → ERROR（9 > 8）
         { type: 'approval/resolved' }, // 清 WAITING_USER → ERROR 仍占优
         { type: 'session/event', event: { type: 'turn/end', data: {} } }, // → IDLE
     ];

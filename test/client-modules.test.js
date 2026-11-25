@@ -47,7 +47,10 @@ test('独立源码模块能迁移动作规则并将命中的规则交给意图�
     assert.deepEqual(rule.actions, ['happy_hop']);
     const frame = {
         type: 'session/event',
-        event: { type: 'tool/call', data: { name: 'write', turn: 't1', step: 1 } },
+        event: {
+            type: 'tool/call',
+            data: { turn: 't1', step: 1, callId: 'c1', name: 'write', arguments: {} },
+        },
     };
     const state = activity.applyFrame(activity.emptyIntentState(), frame, 10000);
     const matched = activity.matchRules([rule], frame, undefined, 10000);
@@ -55,6 +58,38 @@ test('独立源码模块能迁移动作规则并将命中的规则交给意图�
     const intent = 'rule:' + matched.fired[0].id;
     assert.equal(activity.highestIntent({ ...state.active, [intent]: 10000 }, { [intent]: rule }), intent);
     assert.equal(activity.matchRules([rule], frame, matched.state, 10500).fired.length, 0);
+});
+
+test('规则清洗不设数量上限：12 个条件、6 个动作与 60 条规则都原样保留', () => {
+    const catalog = createAnimationCatalog();
+    const activity = createActivitySystem(catalog);
+    const when = Array.from({ length: 12 }, (_, i) => ({
+        field: 'data.k' + i,
+        op: 'eq',
+        value: String(i),
+    }));
+    // 旧实现静默截断到 10 条件 / 5 动作，保存后用户会丢配置；宿主 schema 无上限
+    const actions = [
+        'coding',
+        'taking_notes',
+        'deep_thought',
+        'eating_tokens',
+        'attentive_listening',
+        'looking_around',
+    ];
+    const rule = activity.normalizeRule({ id: 'many', when, actions });
+    assert.equal(rule.when.length, 12, '条件数不能被静默截断到 10');
+    assert.deepEqual(rule.actions, actions, '动作数不能被静默截断到 5');
+
+    // 规则总数同样不截断（旧实现最多 50 条）；逐条校验仍生效
+    const many = Array.from({ length: 60 }, (_, i) => ({
+        id: 'r' + i,
+        when: [{ field: 'type', op: 'eq', value: 'turn/end' }],
+    }));
+    assert.equal(activity.normalizeRules(many).length, 60);
+    assert.equal(activity.normalizeRule({ id: 'bad', when: [{ field: '', op: 'eq', value: 'x' }] }), null);
+    // id 去重仍然保留首条（不是数量截断）
+    assert.equal(activity.normalizeRules([many[0], many[0]]).length, 1);
 });
 
 test('安静模式不再自主移动：预设概率封顶，旧版安静配置合并时迁移', () => {

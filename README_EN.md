@@ -57,11 +57,20 @@ See the [complete gallery of all 95 actions](https://github.com/luweiyabo/dsh-wh
 
 | Item | Requirement |
 |---|---|
-| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2 \|\| ^0.2.2-rc.1` (developer preview; Web profile) |
-| Node.js | `^22.19.0 \|\| >=24.0.0` (follows DSH's official `engines.node`) |
+| Plugin | `@luweiyabo/dsh-whale-pet` 0.2.x (npm `latest` wins; `dsh plugin ... add` installs the newest release) |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2 \|\| ^0.2.2-rc.1` (`engines.dsh` in `package.json`; DSH checks this field for compatibility; 0.2.2 is a developer preview, Web profile) |
+| Node.js | `^22.19.0 \|\| >=24.0.0` (the plugin's `engines.node` is only an npm install hint); **DSH 0.2.2 itself requires Node >=24.9.0** — its own `engines.node` is authoritative |
 | pnpm | Available on the command line; `dsh plugin` delegates package management to pnpm |
 
-The plugin loads as DSH's Web client; the Web and desktop apps share the same client. The commands below use the `web` profile.
+The plugin loads as DSH's Web client; the Web and desktop apps share the same client. The commands below use the `web` profile. Compatibility is judged only by `engines.dsh` and the `@deepseek-ai/dsh*` peer ranges; the package no longer declares `dsh.compatibility` (DSH does not read it). The former `dsh.compatibility.externalCredentials` value was `optional`: **the plugin never requires external credentials** — it works without API keys, and balance / plan-quota lookup is an optional feature (keys stay in the Host).
+
+### Platform verification status
+
+| Platform / capability | Status |
+|---|---|
+| Windows (Web + Desktop) | **Verified on real hardware**: animations, click/drag, balance and plan quota, turn notifications, system notifications |
+| macOS / Linux (system notifications and desktop behavior) | **Not yet verified on real hardware**: implemented against the Web standard; falls back to in-page bubbles / chime when system notifications are unavailable. Real-device reports welcome |
+| Safari / iOS (WebKit static-frame fallback) | **Not yet verified on real hardware**: only UA detection, asset completeness, and the `image/webp` route were tested; WebKit shows static frames only, no per-frame animation |
 
 ### Install from npm
 
@@ -71,6 +80,8 @@ dsh web
 ```
 
 The pet appears in the lower-right corner by default.
+
+> The install command does not pin a version: what you get depends on `latest` on [npm](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet). Pin a version with `@luweiyabo/dsh-whale-pet@0.2.x` if needed.
 
 Alternatively, install directly from GitHub:
 
@@ -114,7 +125,7 @@ Restart `dsh web` after uninstalling. User-uploaded actions remain in `$DSH_HOME
 
 ## Development
 
-Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, `notify.js` decides notification channels (bubble / system notification / chime), `balance-alert.js` owns money and balance/quota alert state, `schedule.js` owns calendar and usage formatting, `host-api.js` adapts to different hosts, and `index.js` owns the UI and player. The host side lives in `lib/index.js` (settings schema, asset routes, balance/quota queries) and `lib/balance-*.js` (source classification and wallet/quota parsing). Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH.
+Client source lives in `src/client/`: `animations.js` owns the animation catalog, `activity.js` owns events, rules and arbitration, `notify.js` decides notification channels (bubble / system notification / chime), `balance-alert.js` owns money and balance/quota alert state, `schedule.js` owns calendar and usage formatting, `host-api.js` adapts to different hosts, and `index.js` owns the UI and player. The host side lives in `lib/index.js` (settings schema, asset routes, balance/quota queries) and `lib/balance-*.js` (source classification and wallet/quota parsing). Run `npm run build` after editing source and commit the generated `lib/client.js` alongside it. `npm run check` verifies that the bundle matches the source. React is still supplied by DSH. The client bundle tries `require('@deepseek-ai/dsh-client-ui-primitives')` at runtime and falls back to built-in SVGs when the host does not provide it, so `dsh.client` does not declare `external` (in DSH 0.2.2, `external` means non-baseline module requests and requires a supplier).
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
@@ -168,7 +179,7 @@ Contributions are welcome through [issues](https://github.com/luweiyabo/dsh-whal
 
 ### Settings
 
-Open **Plugins → Whale Pet** (or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
+Open **Plugins → Whale Pet → this row's Configure** (the 0.2.x entry point; 0.1.x uses Settings → Plugins; or right-click the pet and pick "Settings", which switches to the Plugins panel and opens this row's Configure page) to configure:
 
 - Visibility, text bubbles, balance display, balance alerts, and turn notifications (balance alerts and turn notifications each have one switch; thresholds, refresh interval, API-key permission, turn-end refresh, and weekly/monthly quota thresholds are config-file only)
 - Interactive effects (cursor tilt-follow, click bounce, drag squash)
@@ -230,7 +241,7 @@ Turn on **Show balance** to display the balance and **Balance alert** to be noti
 - **DeepSeek account** (signed in): uses the DSH account service `remote.account.getBalance`; no API key. The amount is recharge + bonus.
 - **Plans / subscriptions** (Kimi Coding, GLM Coding, Qwen / Xiaomi Token Plan, ChatGPT Codex, GitHub Copilot, etc.): reports "plan/subscription billing — no wallet balance" and never queries a wallet; see the plan-quota row below for quota queries.
 - **Plan quota**: Codex reads local logs (5h/week; reads local logs only, offline); OpenCode Go queries its official endpoint (5h/week/month); GLM Coding CN and z.ai intl query their official endpoints (5h/week). When available, the bubble shows "5h 62% · week 31%" and the detail card shows bars plus reset countdowns. No fake numbers when an endpoint is unavailable. Only official provider baseURLs are used for quota; a custom baseURL is treated as unsupported and no key is sent. Quota reads that access the network use the API key by default (Codex needs none); a weekly/monthly window alerts once when 5% or less remains, and the 5h window never alerts. Missing windows are not fabricated.
-- **API-key wallets** (DeepSeek / Moonshot / StepFun): queried by default. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed, and a custom baseURL is treated as unsupported with no key sent.
+- **API-key wallets** (DeepSeek / Moonshot): queried by default. The key stays in the Host and is sent only to the provider's official balance endpoint. Unknown routes are not guessed, and a custom baseURL is treated as unsupported with no key sent. DSH 0.2.2 only auto-detects DeepSeek accounts and the Moonshot (CN / international) built-in routes; **StepFun and other wallets are not built-in reachable options** — they can only match when you hand-write a custom route in the profile (see the unsupported note in `ROADMAP.md`).
 
 Low-balance alerts:
 
@@ -248,7 +259,7 @@ Low-balance alerts:
 Get notified when a turn finishes, fails, or waits for your approval/answer. There are exactly three channels: an in-page bubble, a system notification while the page is not visible/focused, and a chime plus a title dot when system notifications are unavailable.
 
 - Page focused: a bubble above the pet with a reaction animation; in-page notifications are bubbles only (the old notification card and queue have been removed); other sessions include their name, and clicking the bubble switches back
-- Page unfocused/minimized: system notification on Windows, macOS, and Linux (grant browser permission once on the Web; none needed in Desktop)
+- Page unfocused/minimized: system notification (Windows verified on real hardware; macOS/Linux **not yet verified on real hardware**; grant browser permission once on the Web, none needed in Desktop)
 - No system notification available: a short chime plus a `●` title marker (also when permission was denied, the context is insecure, or `Notification` is missing); no card is back-filled when you return
 - One “Turn notifications” checkbox under Display & behavior: it covers completion, failure, and needs-input; system notifications versus the chime is decided by the environment
 - Subagent sessions never notify: a subagent is a separate child session, so its completion/failure only drives pet animations — no bubble, system notification, or chime
@@ -284,7 +295,7 @@ Before uploading, the video metadata is read and possible problems are flagged: 
 
 ## Configuration and data
 
-Settings are stored in the DSH `whale-pet` namespace. Custom animations are stored in `$DSH_HOME/whale-pet/actions/`. The plugin does not upload animations, settings, or API keys to the project maintainer.
+Settings (0.2.x) are stored in the **profile's `cordis.patch.yml`** under the `whale-pet` entry config, not in `$DSH_HOME/settings.yaml`; settings found in a legacy `settings.yaml` are imported once at startup. Custom animations are stored in `$DSH_HOME/whale-pet/actions/`. The plugin does not upload animations, settings, or API keys to the project maintainer.
 
 The settings page title, description, row summary, and all field copy follow the Harness UI language and update immediately when the language changes.
 
@@ -293,7 +304,7 @@ The settings page title, description, row summary, and all field copy follow the
 | `DSH_HOME` | Overrides the DSH data directory |
 | `DEEPSEEK_API_KEY` | One credential source for DeepSeek wallet balance queries |
 | `MOONSHOT_API_KEY` | One credential source for Moonshot wallet balance queries |
-| `STEPFUN_API_KEY` | One credential source for StepFun wallet balance queries |
+| `STEPFUN_API_KEY` | StepFun wallet balance credential (only reachable through a hand-written custom route; DSH 0.2.2 has no built-in StepFun route) |
 | `CODEX_HOME` | Codex local session-log directory (used for plan quota); defaults to `~/.codex` |
 | `ZAI_API_KEY` | One credential source for z.ai (GLM Coding international) quota queries |
 | `ZAI_CODING_CN_API_KEY` | One credential source for GLM Coding CN (Zhipu) quota queries |
@@ -351,7 +362,7 @@ The plugin keeps a single instance with a `localStorage` heartbeat: only the tab
 <details>
 <summary><strong>Why is the pet static in Safari?</strong></summary>
 
-Safari (and every browser on iOS) runs on WebKit, which ignores the VP9 alpha channel and shows the video on a black box. When the plugin detects such an environment it uses a still frame extracted from each animation: the black box is gone, but only static poses remain. Use a Chromium-based browser or the desktop app for frame-by-frame animation.
+Safari (and every browser on iOS) runs on WebKit, which ignores the VP9 alpha channel and shows the video on a black box. When the plugin detects such an environment it uses a still frame extracted from each animation: the black box is gone, but only static poses remain. Use a Chromium-based browser or the desktop app for frame-by-frame animation. Not yet verified on real hardware: only UA detection, static-frame asset completeness, and the `image/webp` route have been tested.
 
 </details>
 
@@ -359,6 +370,7 @@ Safari (and every browser on iOS) runs on WebKit, which ignores the VP9 alpha ch
 
 - Original source code is licensed under the [MIT License](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE).
 - Most animations under [`assets/thumb/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/assets/thumb) come from [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) and are not covered by this project's MIT code license.
+- See [ASSET-LICENSE.md](https://github.com/luweiyabo/dsh-whale-pet/blob/main/ASSET-LICENSE.md) for a quick summary of the asset terms (including the commercial-use prohibition and redistribution requirements); the full terms and attribution are in the [third-party asset notice](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS_EN.md).
 - The upstream project currently allows these assets in open-source projects but prohibits commercial use. Review the [third-party asset notice](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS_EN.md) and the latest upstream terms before use, redistribution, or modification.
 - Because the npm package combines MIT-licensed code with separately licensed media, its package license is `SEE LICENSE IN LICENSE` rather than plain `MIT`. The root [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE) (standard MIT) covers only original code; the media terms are in the [third-party asset notice](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS_EN.md) shipped with the package. The complete package must not be treated as purely MIT-licensed.
 

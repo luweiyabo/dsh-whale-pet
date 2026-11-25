@@ -8,12 +8,16 @@
  *   才能在 `node --test` 里把 Windows/macOS/Linux、Web/Desktop、授权/拒绝、
  *   前台/后台的矩阵全部跑一遍；DOM 与浏览器 API 只在最外层适配器里出现。
  *
- * 【三条通道】
+ * 【三条通道 + 标题兜底】
  *   system —— `new Notification()`：页面失焦/隐藏时进系统通知中心（跨软件可见）。
- *             要求安全上下文 + 已授权；Desktop 由 DSH 主进程放行。
+ *             要求安全上下文 + 已授权；Desktop 由 DSH 主进程放行。构造成功只代表
+ *             已交给平台，展示阶段失败会触发 `onerror`（见 createSystemNotifier.send）。
  *   sound  —— WebAudio 合成短音：系统通知不可用时唯一实时的提示。
  *   bubble —— 页内桌宠上方气泡：页面聚焦时使用；带会话名，点一下切回该会话。
- *   标题 `●` 是 sound 通道的兜底。页内「通知卡片 / 队列」通道已移除（不可达且与气泡重复）。
+ *   标题 `●` 是 sound 通道的兜底。
+ *   页内「通知卡片 / 队列」通道已移除（旧实现不可达且与气泡重复）；运行时只有上述
+ *   三条通道 + 标题。index.js 里残留的「通知卡片 / 通知栈」历史注释与 notifyDismiss
+ *   等旧文案不代表该通道存在，不要据此恢复卡片 UI。
  *
  * 【边界】
  *   1. 页面/应用关闭后收不到任何事件 —— 事件来自页面内的流；要覆盖需要 Push
@@ -214,8 +218,14 @@ export function createSystemNotifier(deps) {
             }
         },
         /**
-         * 发送一条系统通知。成功返回 true；不可用/未授权/被限流/抛错返回 false，
+         * 发送一条系统通知。同步成功返回 true；不可用/未授权/被限流/构造抛错返回 false，
          * 由调用方降级到声音或标题。
+         *
+         * 构造成功不等于已展示：平台在展示阶段失败（权限被收回、页面已关、系统丢弃
+         * toast）会触发 `notification.onerror`。此时把本次结果标记为未发送、回滚限流
+         * 记账（不占同 tag/全局配额），并异步调用可选的 `onFail()` 让调用方补降级
+         * （提示音 / 标题圆点）。不传 `onFail` 时只回滚记账，不抛错。
+         * 环境不支持 `onerror`（赋值抛错）时保持原同步行为。
          */
         send(opts) {
             var o = opts || {};
@@ -240,8 +250,33 @@ export function createSystemNotifier(deps) {
             } catch (e) {
                 return false;
             }
+            var prevTagAt = lastByTag[tag];
             lastByTag[tag] = at;
             recent.push(at);
+            // 异步失败回调：只执行一次；回滚本次限流记账后再触发调用方降级。
+            var pending = true;
+            var markFailed = function () {
+                if (!pending) return;
+                pending = false;
+                if (lastByTag[tag] === at) {
+                    if (prevTagAt === undefined) delete lastByTag[tag];
+                    else lastByTag[tag] = prevTagAt;
+                }
+                var atIndex = recent.indexOf(at);
+                if (atIndex !== -1) recent.splice(atIndex, 1);
+                if (typeof o.onFail === 'function') {
+                    try {
+                        o.onFail();
+                    } catch (e) {
+                        /* 降级回调异常不能影响通知层 */
+                    }
+                }
+            };
+            try {
+                notification.onerror = markFailed;
+            } catch (e) {
+                /* 环境不支持 onerror：保持同步返回行为 */
+            }
             if (typeof o.onClick === 'function') {
                 notification.onclick = function () {
                     try {

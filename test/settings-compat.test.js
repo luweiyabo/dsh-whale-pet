@@ -2,8 +2,48 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots';
 import { resolveHostApi } from '../src/client/host-api.js';
+
+// 槽位测试替身：只实现本文件用到的 SlotCore 面（register / inject / entries），
+// 不再依赖 0.1.x 时代的 @deepseek-ai/dsh-client-ui-slots 包（DSH 0.2.2 已不随装）。
+class SlotCore {
+    constructor() {
+        this.declared = new Set();
+        this.rows = new Map();
+        this.seq = 0;
+    }
+
+    register(options, _component) {
+        const declared = options && options.children;
+        if (declared) for (const name of Object.keys(declared)) this.declared.add(name);
+        const name = options && options.name;
+        const row = { options: options || {}, seq: this.seq++ };
+        const list = this.rows.get(name);
+        if (list) list.push(row);
+        else this.rows.set(name, [row]);
+        return () => {
+            const current = this.rows.get(name);
+            if (!current) return;
+            const index = current.indexOf(row);
+            if (index >= 0) current.splice(index, 1);
+        };
+    }
+
+    inject(name, generator) {
+        if (!this.declared.has(name)) throw new Error(`slot "${name}" is not declared`);
+        for (const _dispose of generator()) {
+            /* 执行注册生成器（内部通过 slots.register 落入本替身）。 */
+        }
+    }
+
+    entries(name) {
+        const list = (this.rows.get(name) || []).slice();
+        // keyed 槽按 priority 升序（真实 SlotCore 的行为），同优先级按注册顺序。
+        return list.sort(
+            (a, b) => (Number(a.options.priority) || 0) - (Number(b.options.priority) || 0) || a.seq - b.seq
+        );
+    }
+}
 
 const bundle = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8');
 

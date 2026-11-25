@@ -934,14 +934,14 @@ export function createAnimationCatalog() {
             );
         }
         var c = customById[id];
-        return c
-            ? '/whale-pet/custom/' +
-                  encodeURIComponent(id) +
-                  '.' +
-                  (c.ext || 'webm') +
-                  '?v=' +
-                  encodeURIComponent(String(c.mtime || 0))
-            : '';
+        if (!c) return '';
+        // 宿主给出的 url 按真实文件名编码（大小写敏感文件系统上 `Dance.MP4` 也能命中），
+        // 旧宿主没有该字段时按 id+小写 ext 兜底。
+        var base =
+            typeof c.url === 'string' && c.url
+                ? c.url
+                : '/whale-pet/custom/' + encodeURIComponent(id) + '.' + (c.ext || 'webm');
+        return base + '?v=' + encodeURIComponent(String(c.mtime || 0));
     };
     // 静态帧 URL：Safari / iOS 这类不认 VP9-alpha 的环境改用抽帧图
     // （assets/thumb/static/<分类>/<id>.webp）。自定义动作没有对应的静态帧，

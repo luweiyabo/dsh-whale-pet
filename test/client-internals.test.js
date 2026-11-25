@@ -184,7 +184,7 @@ test('迁移持久化动作池、意图和规则中的所有已移除动画 ID',
     });
     assert.deepEqual(config.intents.working, expected);
     assert.deepEqual(config.pools.acts, expected);
-    assert.deepEqual(config.rules[0].actions, expected.slice(0, 5));
+    assert.deepEqual(config.rules[0].actions, expected, '规则动作不再按 5 条上限截断');
 });
 
 test('自定义动画 URL 使用修改时间刷新缓存', () => {

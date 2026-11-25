@@ -24,7 +24,17 @@ test('包公开所有 DSH 发布入口', () => {
     assert.equal(packageJson.exports['./client'], './lib/client.js');
     assert.equal(packageJson.dsh.bundle.patch, './cordis.patch.yml');
     assert.equal(packageJson.dsh.client.platform, 'web');
+});
+
+test('files 覆盖运行期资源且不整目录包含 assets', () => {
     assert.ok(packageJson.files.includes('lib'));
-    assert.ok(packageJson.files.includes('assets'));
+    assert.ok(packageJson.files.includes('assets/thumb'));
+    assert.ok(packageJson.files.includes('assets/icon.png'));
+    assert.ok(packageJson.files.includes('locale/*.json'));
     assert.ok(packageJson.files.includes('cordis.patch.yml'));
+    assert.equal(packageJson.files.includes('assets'), false, 'files 不应包含 assets 全目录');
+});
+
+test('package icon 指向随包分发的图标', () => {
+    assert.equal(packageJson.icon, './assets/icon.png');
 });

@@ -113,7 +113,7 @@ test('新版 current 范围切换取消旧订阅，丢弃迟到帧，卸载释�
     f.sessions.list.set({ ...f.sessions.list.getSnapshot(), current: 'b' });
     assert.equal(f.calls[0].signal.aborted, true);
     assert.equal(f.calls.length, 2);
-    f.calls[0].push(event('tool/call', 2, { name: 'write' }));
+    f.calls[0].push(event('tool/call', 2, { name: 'write', turn: 1, step: 1, callId: 'c1', arguments: {} }));
     await delay(5);
     assert.equal(
         frames.some((frame) => frame.event?.type === 'tool/call'),
@@ -158,7 +158,7 @@ test('新版快照恢复未结束回合但不重放规则/用量，实时帧按�
             5,
             [
                 event('turn/start', 1),
-                event('tool/call', 2, { name: 'write', turn: 1, step: 1 }),
+                event('tool/call', 2, { name: 'write', turn: 1, step: 1, callId: 'w1', arguments: {} }),
                 event('assistant/message', 3, { usage: {} }),
             ],
             { next: { provider: 'p', model: 'm' } }
@@ -205,7 +205,14 @@ test('新版聚合状态隔离会话、保留规则脉冲，并恢复问答等�
         },
         { errorHoldMs: 5 }
     );
-    emit({ type: 'session/event', sessionId: 'a', event: { type: 'tool/call', data: { name: 'write' } } });
+    emit({
+        type: 'session/event',
+        sessionId: 'a',
+        event: {
+            type: 'tool/call',
+            data: { name: 'write', turn: 1, step: 1, callId: 'c1', arguments: {} },
+        },
+    });
     emit({ type: 'session/event', sessionId: 'b', event: { type: 'turn/end', data: {} } });
     assert.ok(state.active.CODING);
     emit({ type: 'question/requested', sessionId: 'b' });
@@ -265,24 +272,56 @@ test('新版客户端挂载等待会话与 Remote 命名空间就绪', async () 
     assert.equal(typeof mount, 'function');
 });
 
-test('新版并行工具按调用 ID 清除对应意图，并识别工具结果错误标志', () => {
+test('0.2.2 真实形状：callId 配对清除 CODING，isError 无 error 字段也置 ERROR、toolCounts 归零', () => {
     const system = createActivitySystem({ normalizeAnimId: (id) => id });
     let state = system.emptyIntentState();
     const apply = (type, data) => {
         state = system.applyFrame(state, { type: 'session/event', event: { type, data } }, 1);
     };
-    apply('tool/call', { name: 'pwsh', turn: 1, step: 1, callId: 'command' });
-    apply('tool/call', { name: 'read_image', turn: 1, step: 1, callId: 'image' });
+    // tool/call：0.2.2 data = { turn, step, callId, name, arguments }
+    apply('tool/call', { turn: 1, step: 1, callId: 'A', name: 'bash', arguments: {} });
     assert.ok(state.active.CODING);
-    assert.ok(state.active.READING);
+    assert.equal(state.toolCounts.CODING, 1);
+    // tool/result：0.2.2 data = { turn, step, message: ToolResultMessage }；
+    // toolCallId/isError 在 message 顶层，content 里没有；这里故意不带 error 字段。
     apply('tool/result', {
+        turn: 1,
+        step: 1,
+        message: {
+            role: 'tool',
+            toolCallId: 'A',
+            isError: true,
+            content: [{ type: 'text', text: 'exit 1' }],
+        },
+    });
+    assert.equal(state.active.CODING, undefined, 'callId 配对后应清除 CODING');
+    assert.ok(state.active.ERROR, 'message.isError:true 且无 error 字段也必须置 ERROR');
+    assert.deepEqual(state.toolCounts, {}, 'toolCounts 应随工具结果归零');
+});
+
+test('0.1.x 旧形状兼容：toolCallId 在 content[0]，无 ID 时按 turn:step 配对', () => {
+    const system = createActivitySystem({ normalizeAnimId: (id) => id });
+    const apply = (state, type, data) =>
+        system.applyFrame(state, { type: 'session/event', event: { type, data } }, 1);
+    // 旧宿主的 tool/result 把 toolCallId/isError 嵌在 message.content[0] 里
+    let state = system.emptyIntentState();
+    state = apply(state, 'tool/call', { turn: 1, step: 1, callId: 'command', name: 'pwsh' });
+    state = apply(state, 'tool/call', { turn: 1, step: 1, callId: 'image', name: 'read_image' });
+    state = apply(state, 'tool/result', {
         turn: 1,
         step: 1,
         message: { content: [{ toolCallId: 'command', isError: true }] },
     });
-    assert.equal(state.active.CODING, undefined);
+    assert.equal(state.active.CODING, undefined, '旧形状 callId 也应配对清除 CODING');
     assert.ok(state.active.READING);
-    assert.ok(state.active.ERROR);
+    assert.ok(state.active.ERROR, '旧形状 content[0].isError 也必须置 ERROR');
+    // 极旧宿主连调用 ID 都没有：call/result 都退回 turn:step 配对
+    let legacy = system.emptyIntentState();
+    legacy = apply(legacy, 'tool/call', { turn: 2, step: 5, name: 'bash' });
+    assert.ok(legacy.active.CODING);
+    legacy = apply(legacy, 'tool/result', { turn: 2, step: 5 });
+    assert.equal(legacy.active.CODING, undefined, '无 ID 时 turn:step 应能配对');
+    assert.deepEqual(legacy.toolCounts, {});
 });
 
 test('新版规则脉冲不被后续状态帧擦掉，工具规则记账按会话隔离', () => {
@@ -316,9 +355,13 @@ test('新版规则脉冲不被后续状态帧擦掉，工具规则记账按会�
         }
     );
     const send = (sessionId, type, data) => emit({ sessionId, type: 'session/event', event: { type, data } });
-    send('a', 'tool/call', { name: 'write', turn: 1, step: 1 });
-    send('b', 'tool/call', { name: 'read', turn: 1, step: 1 });
-    send('a', 'tool/result', { turn: 1, step: 1 });
+    send('a', 'tool/call', { name: 'write', turn: 1, step: 1, callId: 'wa', arguments: {} });
+    send('b', 'tool/call', { name: 'read', turn: 1, step: 1, callId: 'rb', arguments: {} });
+    send('a', 'tool/result', {
+        turn: 1,
+        step: 1,
+        message: { role: 'tool', toolCallId: 'wa', content: [{ type: 'text', text: 'ok' }] },
+    });
     assert.deepEqual(fired, ['written']);
     send('b', 'turn/end', {});
     assert.ok(state.active['rule:written']);
@@ -366,14 +409,52 @@ test('新版快照恢复工具配对供后续结果规则使用，同时保留�
         }
     );
     f.calls[0].push(
-        snapshot(2, [event('turn/start', 1), event('tool/call', 2, { name: 'write', callId: 'x' })])
+        snapshot(2, [
+            event('turn/start', 1),
+            event('tool/call', 2, { name: 'write', turn: 1, step: 1, callId: 'x', arguments: {} }),
+        ])
     );
     await delay(5);
     assert.deepEqual(fired, []);
-    f.calls[0].push(event('tool/result', 3, { message: { content: [{ toolCallId: 'x' }] } }));
+    f.calls[0].push(
+        event('tool/result', 3, {
+            turn: 1,
+            step: 1,
+            message: { role: 'tool', toolCallId: 'x', content: [{ type: 'text', text: 'ok' }] },
+        })
+    );
     f.calls[0].push(event('approval/asked', 4, { id: 'ask' }));
     f.calls[0].push(event('turn/end', 5, { reason: { kind: 'error' } }));
     await delay(5);
     assert.deepEqual(fired, ['result', 'approval', 'error']);
+    stop();
+});
+
+test('ERROR 脉冲重复触发会重置保持窗口：3s 内二次出错从第二次重新计时', async () => {
+    let emit;
+    let state;
+    const system = createActivitySystem({ normalizeAnimId: (id) => id });
+    const stop = system.startActivitySensor(
+        {
+            subscribeActivity: (fn) => {
+                emit = fn;
+                return () => {};
+            },
+        },
+        (next) => {
+            state = next;
+        },
+        { errorHoldMs: 300 }
+    );
+    const errorFrame = () => emit({ type: 'host/agent-error' });
+    errorFrame();
+    assert.ok(state.active.ERROR);
+    await delay(100);
+    errorFrame(); // 第二次错误：保持窗口应从这里重新计时
+    assert.ok(state.active.ERROR);
+    await delay(250); // 距第一次 350ms（>300ms），距第二次 250ms
+    assert.ok(state.active.ERROR, '第二次错误应延长保持窗口，而不是沿用第一次的 timer');
+    await delay(100); // 距第二次 350ms > 300ms
+    assert.equal(state.active.ERROR, undefined, '第二次错误后保持窗口到期');
     stop();
 });

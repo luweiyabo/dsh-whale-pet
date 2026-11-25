@@ -234,11 +234,20 @@ dsh-whale-pet 是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/
 
 | 项目 | 要求 |
 |---|---|
-| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2 \|\| ^0.2.2-rc.1`（开发者预览版；Web profile） |
-| Node.js | `^22.19.0 \|\| >=24.0.0`（跟随 DSH 官方要求，见 DSH `package.json` 的 `engines.node`） |
+| 插件本身 | `@luweiyabo/dsh-whale-pet` 0.2.x（以 npm `latest` 为准；`dsh plugin ... add` 默认安装最新版） |
+| DeepSeek Harness | `^0.1.0-rc.6 \|\| ^0.1.2-rc.1 \|\| ^0.2.0-rc.2 \|\| ^0.2.2-rc.1`（`package.json` 的 `engines.dsh`，DSH 按它判定兼容；0.2.2 为开发者预览版，Web profile） |
+| Node.js | `^22.19.0 \|\| >=24.0.0`（插件 `engines.node`，只是 npm 安装提示）；**DSH 0.2.2 自身要求 Node >=24.9.0**，实际以 DSH 的 `engines.node` 为准 |
 | pnpm | 可在命令行中使用；`dsh plugin` 会把插件管理命令转发给 pnpm |
 
-插件按 DSH 的 Web 客户端加载，Web 与桌面端共用同一套界面；下面的命令以 `web` profile 为例。
+插件按 DSH 的 Web 客户端加载，Web 与桌面端共用同一套界面；下面的命令以 `web` profile 为例。兼容性判定只看 `engines.dsh` 与 `@deepseek-ai/dsh*` 的 peer 范围；包内不再声明 `dsh.compatibility`（DSH 不读该字段）。原 `dsh.compatibility.externalCredentials` 为 `optional`：**插件不强制配置外部凭据**，不填 API key 也能正常使用，余额 / 套餐额度查询属于可选功能（key 只在宿主使用）。
+
+### 平台验证状态
+
+| 平台 / 能力 | 状态 |
+|---|---|
+| Windows（Web + Desktop） | **已实测**：动画、点击/拖拽、余额与套餐额度、回合提示、系统通知 |
+| macOS / Linux（系统通知与桌面端表现） | **未真机验证**：按 Web 标准实现；系统通知不可用时降级为页内气泡 / 提示音，欢迎实测后反馈 |
+| Safari / iOS（WebKit 静态帧兜底） | **未真机验证**：只验证了 UA 判定、静态帧素材齐全与路由返回 `image/webp`；WebKit 下仅显示静态帧，无逐帧动画 |
 
 ### 从 npm 安装
 
@@ -253,6 +262,8 @@ dsh web
 ```
 
 宠物默认显示在页面右下角。
+
+> 安装命令不指定版本，实际装到的版本以 [npm](https://www.npmjs.com/package/@luweiyabo/dsh-whale-pet) 上的 `latest` 为准（本仓库与公开仓可能领先于已发布版本）；需要锁定版本时写成 `@luweiyabo/dsh-whale-pet@0.2.x`。
 
 > 或者直接从 GitHub 安装：
 >
@@ -298,7 +309,7 @@ dsh plugin --profile web remove @luweiyabo/dsh-whale-pet
 
 ## 开发
 
-客户端源码位于 `src/client/`：`animations.js` 管理动画目录，`activity.js` 管理事件、规则与仲裁，`notify.js` 判定通知通道（气泡/系统通知/提示音），`balance-alert.js` 负责金额与余额/额度提醒状态，`schedule.js` 负责日历与用量格式化，`host-api.js` 适配不同宿主的 API，`index.js` 保留界面与播放器。宿主侧在 `lib/index.js`（设置 schema、资源路由、余额与套餐额度查询）和 `lib/balance-*.js`（来源分类、钱包与额度解析）中。修改源码后运行 `npm run build`，同时提交生成的 `lib/client.js`；`npm run check` 会校验产物与源码一致。React 仍由 DSH 宿主提供。
+客户端源码位于 `src/client/`：`animations.js` 管理动画目录，`activity.js` 管理事件、规则与仲裁，`notify.js` 判定通知通道（气泡/系统通知/提示音），`balance-alert.js` 负责金额与余额/额度提醒状态，`schedule.js` 负责日历与用量格式化，`host-api.js` 适配不同宿主的 API，`index.js` 保留界面与播放器。宿主侧在 `lib/index.js`（设置 schema、资源路由、余额与套餐额度查询）和 `lib/balance-*.js`（来源分类、钱包与额度解析）中。修改源码后运行 `npm run build`，同时提交生成的 `lib/client.js`；`npm run check` 会校验产物与源码一致。React 仍由 DSH 宿主提供。客户端 bundle 运行时会尝试 `require('@deepseek-ai/dsh-client-ui-primitives')`，宿主未提供该模块时用内置 SVG 兜底，因此 `dsh.client` 不声明 `external`（0.2.2 的 `external` 表示“非 baseline 模块请求”，声明后就要求有 supplier）。
 
 ```sh
 git clone https://github.com/luweiyabo/dsh-whale-pet.git
@@ -326,7 +337,7 @@ npm pack --dry-run
 - [`lib/balance-providers.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/balance-providers.js)、[`lib/deepseek-balance.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/deepseek-balance.js)：钱包余额端点与响应解析
 - [`lib/client.js`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/lib/client.js)：浏览器侧播放、交互、意图仲裁和设置界面
 - [`cordis.patch.yml`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/cordis.patch.yml)：DSH bundle 挂载声明
-- [`assets/plugin-logo.png`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/assets/plugin-logo.png)：插件 Logo
+- [`assets/plugin-logo.png`](https://github.com/luweiyabo/dsh-whale-pet/blob/main/assets/plugin-logo.png)：插件 Logo（仓库素材，README 通过 raw 链接引用；不随 npm 包分发）
 - [`assets/thumb/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/assets/thumb)：内置透明动画
 - [`docs/images/screenshots/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/docs/images/screenshots)：README 功能预览截图
 - [`docs/images/actions/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/docs/images/actions)：95 个动作的低帧率循环 GIF
@@ -352,7 +363,7 @@ npm pack --dry-run
 
 ### 打开设置
 
-进入 **插件 → 大肥鱼桌宠**（或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
+进入 **插件 → 大肥鱼桌宠 → 该行「配置」**（0.2.x 的配置页入口；0.1.x 走「设置 → 插件」；或右键宠物选「打开设置」，插件会切到「插件」页并点开本行的「配置」），可以调整：
 
 - 显示、文字气泡、余额显示、余额提醒和回合完成提示（余额提醒与回合提示各一个开关；余额阈值、刷新间隔、API-key 授权、回合结束刷新和周/月额度阈值只能在配置文件手改）
 - 交互动效（光标倾斜跟随、点击弹跳、拖拽挤压）
@@ -418,7 +429,7 @@ npm pack --dry-run
 - **DeepSeek 账户**（已登录）：走 DSH 账户服务 `remote.account.getBalance`，不需要 API key；金额为充值 + 赠送合计。
 - **套餐 / 订阅**（Kimi Coding、GLM Coding、Qwen / Xiaomi Token Plan、ChatGPT Codex、GitHub Copilot 等）：余额区显示“套餐/订阅计费，不适用余额查询”，不查钱包；套餐额度查询见下一条。
 - **套餐额度**：Codex 读本地日志（5h/周，只读日志、不联网）；OpenCode Go 查官方接口（5h/周/月）；GLM Coding 国内站 / z.ai 国际站查官方接口（5h/周）。有额度接口时，气泡显示“5h 62% · 周 31%”，详情卡显示进度条与重置倒计时；没有接口、或接口没返回某个窗口时不伪造数字。只使用服务商官方 baseURL，自定义 baseURL 视为不支持、不发送 key。需要联网的额度查询默认使用 API key（Codex 不需要）；周/月额度剩余 ≤5% 时提醒一次，5h 窗口不参与提醒。
-- **API-key 钱包**（DeepSeek / Moonshot / StepFun）：默认查询；key 只在宿主使用，只发往对应服务商的官方余额端点；未知路由不猜，自定义 baseURL 视为不支持、不发送 key。
+- **API-key 钱包**（DeepSeek / Moonshot）：默认查询；key 只在宿主使用，只发往对应服务商的官方余额端点；未知路由不猜，自定义 baseURL 视为不支持、不发送 key。DSH 0.2.2 的内置路由里只有 DeepSeek 账户与 Moonshot（国内 / 国际站）会被自动识别；**StepFun 等其它钱包不属于内置可达项**，只有在 profile 手写自定义路由时才可能命中（见 `ROADMAP.md` 的 unsupported 说明）。
 
 低余额提醒：
 
@@ -436,7 +447,7 @@ npm pack --dry-run
 回合结束、失败或等待你审批/回答时提醒。通道只有三条：页内气泡、页面不可见/失焦时的系统通知、系统通知不可用时的提示音 + 标题圆点。
 
 - 页面聚焦时：桌宠上方出气泡并联动动画，页内只出气泡（旧的页内通知卡片与队列已移除）；其他会话带会话名，点气泡切回该会话
-- 页面失焦/最小化：使用系统通知（Windows/macOS/Linux，Web 首次需允许浏览器通知；Desktop 免授权）
+- 页面失焦/最小化：使用系统通知（Windows 已实测；macOS/Linux 未真机验证；Web 首次需允许浏览器通知，Desktop 免授权）
 - 系统通知不可用：播放短提示音 + 标题 `●` 圆点（未授权、非安全上下文或无 Notification 时同理）；回到前台不再补显卡片
 - 配置页「显示与行为」只有一个「回合提示」开关：勾选即提示完成/失败/待确认，系统通知与提示音按环境自动选择
 - 后台会话的回合不受「感知范围」限制，切走会话也能收到完成提示
@@ -472,7 +483,7 @@ $DSH_HOME/whale-pet/actions/
 
 ## 配置与数据
 
-插件设置保存在 DSH 的 `whale-pet` 设置命名空间，自定义动画保存在 `$DSH_HOME/whale-pet/actions/`。拖拽落点以 `posX`/`posY` 比例值保存在同一命名空间；日历相关旧字段保留在 `calendar`（设置页已不提供开关）。插件不会把动画、设置或 API Key 上传到本项目维护者的服务器。
+插件设置（0.2.x）保存在 **profile 的 `cordis.patch.yml`** 中 `whale-pet` 条目的 config 下，不再写入 `$DSH_HOME/settings.yaml`；旧版 `settings.yaml` 里的设置只在启动时做一次性导入。自定义动画保存在 `$DSH_HOME/whale-pet/actions/`。拖拽落点以 `posX`/`posY` 比例值保存在同一配置里；日历相关旧字段保留在 `calendar`（设置页已不提供开关）。插件不会把动画、设置或 API Key 上传到本项目维护者的服务器。
 
 常用环境变量：
 
@@ -481,7 +492,7 @@ $DSH_HOME/whale-pet/actions/
 | `DSH_HOME` | 指定 DSH 数据目录；未设置时使用 DSH 默认目录 |
 | `DEEPSEEK_API_KEY` | DeepSeek 钱包余额查询凭据来源之一 |
 | `MOONSHOT_API_KEY` | Moonshot 钱包余额查询凭据来源之一 |
-| `STEPFUN_API_KEY` | StepFun 钱包余额查询凭据来源之一 |
+| `STEPFUN_API_KEY` | StepFun 钱包余额查询凭据（仅在 profile 手写自定义路由时可达；DSH 0.2.2 无内置 StepFun 路由） |
 | `CODEX_HOME` | Codex 本地会话日志目录（用于套餐额度）；默认 `~/.codex` |
 | `ZAI_API_KEY` | z.ai（GLM Coding 国际站）套餐额度查询凭据来源之一 |
 | `ZAI_CODING_CN_API_KEY` | GLM Coding 国内站（智谱）套餐额度查询凭据来源之一 |
@@ -539,6 +550,7 @@ MP4（H.264）没有透明通道，宠物会显示成黑色方块；请改用带
 
 - 本项目原创代码使用 [MIT License](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)
 - [`assets/thumb/`](https://github.com/luweiyabo/dsh-whale-pet/tree/main/assets/thumb) 中的大部分动画资源来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，不属于本项目的 MIT 代码授权
+- 素材授权速查（含「禁止商业使用」摘要与再分发要求）见 [ASSET-LICENSE.md](https://github.com/luweiyabo/dsh-whale-pet/blob/main/ASSET-LICENSE.md)，完整条款与来源署名见 [第三方资源许可说明](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS.md)
 - 上游目前允许这些动画资源用于开源项目，但禁止商业使用；使用、再分发或改编前请阅读 [第三方资源许可说明](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS.md) 并核对上游最新条款
 - 因 npm 包同时包含 MIT 代码和受单独条款约束的媒体资源，包的许可字段为 `SEE LICENSE IN LICENSE` 而非单纯的 `MIT`；根目录 [LICENSE](https://github.com/luweiyabo/dsh-whale-pet/blob/main/LICENSE)（标准 MIT）仅覆盖原创代码，媒体资源条款见随包分发的 [第三方资源许可说明](https://github.com/luweiyabo/dsh-whale-pet/blob/main/THIRD_PARTY_ASSETS.md)，不能把整个 npm 包视为纯 MIT 授权
 

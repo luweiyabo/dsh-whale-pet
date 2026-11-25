@@ -1,7 +1,7 @@
 import { createAnimationCatalog } from './animations.js';
 import EXTRA_LOCALES from './locales/index.js';
 import { createActivitySystem } from './activity.js';
-import { resolveHostApi } from './host-api.js';
+import { createRemoteSessionGetter, createSettingsGetter, resolveHostApi } from './host-api.js';
 import {
     addUsage,
     emptyUsage,
@@ -270,6 +270,7 @@ window.__ModuleLoader__.load({
             '.wp-rule-sum{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}',
             '.wp-rule-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}',
             '.wp-rule-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:0 0;color:var(--dsw-alias-label-secondary);border-radius:7px;padding:3px 10px;font-size:12px;line-height:1.5;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:5px}',
+            '.wp-rule-invalid{color:var(--dsw-alias-state-error-primary,#d33);font-size:12px;line-height:1.5;margin-left:4px}',
             '.wp-rule-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed)}',
             '.wp-rule-btnDestructive:hover{color:var(--dsw-alias-label-error);border-color:var(--dsw-alias-label-error)}',
             '.wp-rule-editor{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;margin-top:8px}',
@@ -580,7 +581,7 @@ window.__ModuleLoader__.load({
             var pendingRef = useRef(null); // 加载中的 {anim, once, gen}
             var genRef = useRef(0); // 切换代数
 
-            return useCallback(
+            var play = useCallback(
                 (anim, once, onReady) => {
                     // 同一动画还在加载中：直接跳过（避免重复加载）
                     var pending = pendingRef.current;
@@ -621,6 +622,9 @@ window.__ModuleLoader__.load({
                     var readyEvent = anim === FLING ? 'seeked' : 'loadeddata';
                     var onReadyHandler = () => {
                         el.removeEventListener(readyEvent, onReadyHandler);
+                        // 成功路径必须同时摘掉失败监听：否则每次切换都在两个 <video> 上
+                        // 累积一个永不触发的 error 闭包（长会话每 10s 一个）。
+                        el.removeEventListener('error', onError);
                         // 过期检查：期间又有更新的切换，本回调作废
                         if (!pendingRef.current || pendingRef.current.gen !== gen) return;
                         // 交换前后台：新视频加 is-front（淡入），旧视频移除（淡出）并暂停（避免隐藏循环空转）
@@ -656,6 +660,14 @@ window.__ModuleLoader__.load({
                 },
                 [videoARef, videoBRef]
             );
+            // 隐藏（visible=false / 配置页 / 非主标签）会让 <video> 卸载，但 hook 状态仍在：
+            // 加载中的 pending 必须清掉，否则恢复显示后的同 (anim, once) 重放会被去重守卫
+            // 吞掉，重建的 video 拿不到 src（宠物透明）。
+            play.reset = useCallback(() => {
+                pendingRef.current = null;
+                genRef.current += 1;
+            }, []);
+            return play;
         }
 
         // ============================================================================
@@ -800,7 +812,10 @@ window.__ModuleLoader__.load({
         }
         /** 额度窗口摘要：5h 62% · 周 31%；没有可用窗口返回空串。 */
         function quotaSummary(quota, labels) {
-            if (!quota || quota.status !== 'ready' || !Array.isArray(quota.windows)) return '';
+            if (!quota) return '';
+            // 采样过期（如 Codex 日志早于窗口长度）：明确显示"已过期"，不伪造百分比。
+            if (quota.status === 'expired') return (labels && labels.quotaExpired) || '';
+            if (quota.status !== 'ready' || !Array.isArray(quota.windows)) return '';
             return quota.windows
                 .filter(
                     (w) =>
@@ -1197,7 +1212,7 @@ window.__ModuleLoader__.load({
         // 账户余额 Remote 的 client version：Platform 只作为 x-client-version 记录，
         // 不参与余额语义。版本号由构建脚本从 package.json 注入（单一来源）；
         // 直接以源码运行（node --test）时没有 define，回落到占位值。
-        var PLUGIN_CLIENT_VERSION = typeof __PLUGIN_VERSION__ === 'undefined' ? '0.2.0' : __PLUGIN_VERSION__;
+        var PLUGIN_CLIENT_VERSION = typeof __PLUGIN_VERSION__ === 'undefined' ? '0.0.0' : __PLUGIN_VERSION__;
         var DEFAULT_CONFIG = {
             visible: true,
             bubbles: true,
@@ -1588,6 +1603,27 @@ window.__ModuleLoader__.load({
             );
             if (sessionSnapshot) currentSession = sessionSnapshot.current;
             // Desktop 0.2.x 的 sessions.list 不再带 current，当前会话在 uiSession.current。
+            // uiSession 服务可能晚于挂载就绪（api.uiSession 是惰性 getter）：轮询到它就绪后
+            // 强制重渲染一次，让下面的 useSyncExternalStore 重新订阅，而不是整页缺失。
+            var [uiTick, bumpUiTick] = useState(0);
+            useEffect(() => {
+                if (!api || api.uiSession) return undefined;
+                var attempts = 0;
+                var timer = setInterval(() => {
+                    attempts += 1;
+                    var ready = false;
+                    try {
+                        ready = !!api.uiSession;
+                    } catch (e) {
+                        ready = false;
+                    }
+                    if (ready || attempts > 60) {
+                        clearInterval(timer);
+                        if (ready) bumpUiTick((n) => n + 1);
+                    }
+                }, 300);
+                return () => clearInterval(timer);
+            }, [api, uiTick]);
             var uiSessionSnapshot = useSyncExternalStore(
                 api?.uiSession?.current
                     ? (listener) => api.uiSession.current.subscribe(listener)
@@ -2015,6 +2051,18 @@ window.__ModuleLoader__.load({
                         permission: notifierRef.current.permission(),
                     });
                     if (decision.channel === 'none') return;
+                    // 气泡开关关闭时，页内通道降级为「系统通知 → 提示音 + 标题」：
+                    // notify.js 的通道判定只看页面可见性，不知道 bubbles 配置，
+                    // 旧实现会在用户关掉气泡后让当前会话的完成提示彻底静默。
+                    if (decision.channel === 'bubble' && cfgNow.bubbles === false) {
+                        var systemReady =
+                            notifierRef.current.secureContext() &&
+                            notifierRef.current.supported() &&
+                            notifierRef.current.permission() === 'granted';
+                        decision = systemReady
+                            ? { channel: 'system', title: false }
+                            : { channel: 'sound', title: true };
+                    }
                     var text = formatNotifyText(entry, tPetRef.current);
                     var sessionName = sessionTitleOf(entry.sessionId);
                     var chime = () => {
@@ -2041,6 +2089,8 @@ window.__ModuleLoader__.load({
                                 }
                                 openNotifySession(entry.sessionId);
                             },
+                            // 展示阶段失败（onerror，异步）：已响过提示音，只补标题圆点。
+                            onFail: bumpNotifyTitle,
                         });
                         chime();
                         if (sent) return;
@@ -2214,6 +2264,12 @@ window.__ModuleLoader__.load({
                             tag: tag,
                             requireInteraction: false,
                             onClick: openAlert,
+                            // 展示阶段失败（系统层未弹出）：与构造失败同一条降级路径。
+                            onFail: () => {
+                                if (focusedNow) showAlertBubble();
+                                playChime();
+                                bumpNotifyTitle();
+                            },
                         });
                         if (sent) {
                             // 页面聚焦时再补一条页内气泡：双重可见，切回来也还有记录
@@ -2325,6 +2381,16 @@ window.__ModuleLoader__.load({
                                             result.alerts
                                         );
                                 }
+                            } else if (
+                                d &&
+                                d.status === 'ready' &&
+                                d.expired === true &&
+                                Array.isArray(d.windows) &&
+                                d.windows.length === 0
+                            ) {
+                                // 采样时间早于窗口长度（Codex 本地日志可能很旧）：明确标记过期，
+                                // 不把旧用量当当前额度，也不触发额度告警。
+                                mb.quota = { status: 'expired', at: d.at || Date.now() };
                             } else {
                                 mb.quota = {
                                     status: (d && d.status) || 'unavailable',
@@ -2641,9 +2707,13 @@ window.__ModuleLoader__.load({
                 var query = sessionId ? '?sessionId=' + encodeURIComponent(sessionId) : '';
                 return fetch('/whale-pet/api/model' + query)
                     .then((r) => r.json())
-                    .then((d) =>
-                        d && d.ok && d.current && d.current.provider && d.current.model ? d.current : null
-                    )
+                    .then((d) => {
+                        if (!d || !d.ok || !d.current || !d.current.provider || !d.current.model) return null;
+                        // 宿主按「seq 最大会话」猜的模型（fallback:true）只在拿不到真实会话 id 时
+                        // 采纳；有会话时等它的真实投影，避免气泡短暂显示别的会话的 provider。
+                        if (d.fallback === true && sessionId) return null;
+                        return d.current;
+                    })
                     .catch(() => null);
             }, []);
 
@@ -2814,11 +2884,12 @@ window.__ModuleLoader__.load({
                 });
             }, [playing]);
 
-            // ---- 后台标签页：暂停两路视频（Chromium 不保证后台标签暂停媒体），
+            // ---- 后台标签页 / 拖出屏幕完全隐藏：暂停两路视频（Chromium 不保证后台
+            // 标签暂停媒体；拖出视口后 DOM 仍在屏外解码，长时间挂机会持续占 CPU/GPU），
             // 恢复时只续播当前前景层。行为链靠 onended 推进，暂停即自然挂起。----
             useEffect(() => {
                 var videos = [videoARef.current, videoBRef.current];
-                if (!docVisible) {
+                if (!docVisible || hide.active) {
                     videos.forEach((el) => {
                         if (el && !el.paused) {
                             el.dataset.wpPaused = '1';
@@ -2837,7 +2908,7 @@ window.__ModuleLoader__.load({
                 if (!isLeader) return;
                 var c = cfgRef.current;
                 if (c && (c.meter || (c.balance && c.balance.alert))) refreshBalance();
-            }, [docVisible, isLeader]);
+            }, [docVisible, isLeader, hide.active]);
 
             // ---- 桌宠层恢复：visible=false 或设置页在场时组件 return null，
             // 两个 <video> 被卸载；恢复后元素是新建的（src 为空），而 playing 未变、
@@ -2850,6 +2921,7 @@ window.__ModuleLoader__.load({
                 var hiddenNow = (cfg && cfg.visible === false) || settingsPanelVisible || !isLeader;
                 var was = prevHiddenRef.current;
                 prevHiddenRef.current = hiddenNow;
+                if (hiddenNow) play.reset();
                 if (!hiddenNow && was) {
                     play(playing.anim, playing.once, (el) => {
                         el.style.transform = animFacingTransform(playing.anim, facingRef.current);
@@ -4598,6 +4670,16 @@ window.__ModuleLoader__.load({
                                                     ),
                                                 quotaRows &&
                                                     h('div', { className: 'wp-balanceQuota' }, quotaRows),
+                                                mb.quota &&
+                                                    mb.quota.status === 'expired' &&
+                                                    h(
+                                                        'p',
+                                                        { className: 'wp-balanceDetail' },
+                                                        tPet('quotaExpired') +
+                                                            (mb.quota.at
+                                                                ? ' · ' + formatClock(mb.quota.at)
+                                                                : '')
+                                                    ),
                                             ]
                                         ),
                                 ]
@@ -4753,7 +4835,8 @@ window.__ModuleLoader__.load({
                 secBalance: '账户余额',
                 hintBalance: '先选来源（账户/套餐/钱包）；API-key 钱包只在显式授权后查询',
                 labelBalanceAlert: '余额提醒',
-                hintBalanceAlert: '钱包低于 CNY 5 / USD 1，或套餐周/月额度剩余 ≤5% 时提醒一次；恢复后复位',
+                hintBalanceAlert:
+                    '钱包低于配置的阈值，或套餐周/月额度剩余不足配置的比例时提醒一次；恢复后复位（阈值可在配置文件手改）',
                 labelAllowApiKey: '允许使用 API key 查询',
                 hintAllowApiKey: 'key 只在宿主使用，仅发往服务商官方余额/额度端点；不写入日志或浏览器',
                 labelThresholdCny: 'CNY 阈值',
@@ -4821,6 +4904,7 @@ window.__ModuleLoader__.load({
                 meterSignedOut: '未登录 DeepSeek 账户',
                 meterAccountUnavailable: '当前 DSH 版本不支持账户余额',
                 meterPlan: '套餐/订阅计费，不适用余额查询',
+                quotaExpired: '额度数据已过期',
                 balanceAccountLabel: 'DeepSeek 账户',
                 balanceAlertTitle: '余额偏低',
                 balanceAlertLine: '{amount}（阈值 {threshold}）',
@@ -4964,6 +5048,7 @@ window.__ModuleLoader__.load({
                 fieldWeek: '星期',
                 invalidRegex: '正则表达式无效',
                 dangerousRegex: '正则存在灾难性回溯风险（嵌套量词），请改写',
+                ruleInvalid: '规则不完整或含非法字段（检查自定义条件/长度），保存已禁用',
                 ruleMissingActions: '未选动画（触发后回落自主链）',
                 labelSize: '尺寸',
                 labelCorner: '角落',
@@ -5043,7 +5128,7 @@ window.__ModuleLoader__.load({
                     'Source first (account / plan / wallet); API-key wallets are queried only after explicit consent',
                 labelBalanceAlert: 'Balance alert',
                 hintBalanceAlert:
-                    'Alert once when the wallet drops below CNY 5 / USD 1, or weekly/monthly plan quota has 5% or less left; resets when restored',
+                    'Alert once when the wallet drops below the configured threshold, or a weekly/monthly plan quota has no more than the configured percentage left; resets when restored (thresholds are editable in the config file)',
                 labelAllowApiKey: 'Allow API-key queries',
                 hintAllowApiKey:
                     "The key stays in the Host and is sent only to the provider's official balance/quota endpoint",
@@ -5116,6 +5201,7 @@ window.__ModuleLoader__.load({
                 meterSignedOut: 'Not signed in to DeepSeek',
                 meterAccountUnavailable: 'Account balance is unavailable in this DSH version',
                 meterPlan: 'Plan/subscription billing — no wallet balance',
+                quotaExpired: 'Quota data is stale',
                 balanceAccountLabel: 'DeepSeek account',
                 balanceAlertTitle: 'Low balance',
                 balanceAlertLine: '{amount} (threshold {threshold})',
@@ -5262,6 +5348,7 @@ window.__ModuleLoader__.load({
                 fieldWeek: 'weekday',
                 invalidRegex: 'Invalid regular expression',
                 dangerousRegex: 'Regex risks catastrophic backtracking (nested quantifiers); rewrite it',
+                ruleInvalid: 'Rule is incomplete or has invalid fields; saving is disabled',
                 ruleMissingActions: 'No animation selected (falls back to the idle chain)',
                 labelSize: 'Size',
                 labelCorner: 'Corner',
@@ -6197,7 +6284,6 @@ window.__ModuleLoader__.load({
                 }
                 if (!isSafeRegexPattern(c.value)) regexErr = 'danger';
             });
-            var canSave = conds.length >= 1 && !regexErr;
             var build = () =>
                 normalizeRule({
                     id: rule.id,
@@ -6210,6 +6296,10 @@ window.__ModuleLoader__.load({
                     actions: actions,
                     bubble: bubble,
                 });
+            // 保存按钮必须反映 normalizeRule 的结果：自定义字段为空/超长等会返回 null，
+            // 旧实现按钮照常可点、点了却没有任何反馈（用户以为按钮坏了）。
+            var built = build();
+            var canSave = conds.length >= 1 && !regexErr && !!built;
             var fieldSelect = (c, i) => {
                 var known = FIELD_OPTS.some((f) => f[0] === c.field) || c.field === '';
                 return h(
@@ -6551,6 +6641,7 @@ window.__ModuleLoader__.load({
                                 { type: 'button', className: 'wp-rule-btn', onClick: () => onTest(build()) },
                                 [h(IconPlay, { className: 'wp-sf-icon' }), t('testRule')]
                             ),
+                            !canSave && h('span', { className: 'wp-rule-invalid' }, t('ruleInvalid')),
                             h('div', {
                                 className: 'wp-rule-actionEnd',
                                 children: [
@@ -6750,6 +6841,48 @@ window.__ModuleLoader__.load({
         // 设置表单（纯展示）：数据与保存由 SettingsCard 持有，拆出便于 SSR 结构测试。
         // custom：{ ids: 自定义动作 id 数组, display, onRefresh } —— 缺省按空处理。
         // ruleUi：{ firedAt, onTest } —— 规则触发时间戳 + 试触发回调，缺省安全。
+        // 数字输入：旧实现是"受控输入 + 每次按键都钳制"，用户键入 300 会得到
+        // 3→钳成 220 →再键成 2200→钳成 900，根本无法用键盘输入常见值。
+        // 现在保留本地字符串草稿，只在失焦/回车时解析并钳制后提交。
+        function NumInput({ value, onChange, step, min, max }) {
+            var [text, setText] = useState(typeof value === 'number' ? String(value) : '');
+            var editingRef = useRef(false);
+            useEffect(() => {
+                if (!editingRef.current) setText(typeof value === 'number' ? String(value) : '');
+            }, [value]);
+            var commit = () => {
+                editingRef.current = false;
+                var next = parseFloat(text);
+                if (!isFinite(next)) next = typeof value === 'number' ? value : 0;
+                if (typeof min === 'number' && next < min) next = min;
+                if (typeof max === 'number' && next > max) next = max;
+                setText(String(next));
+                if (next !== value) onChange(next);
+            };
+            return h('input', {
+                type: 'number',
+                step: step || '1',
+                ...(typeof min === 'number' ? { min: min } : {}),
+                ...(typeof max === 'number' ? { max: max } : {}),
+                className: 'wp-sf-input',
+                value: text,
+                onFocus: () => {
+                    editingRef.current = true;
+                },
+                onChange: (e) => {
+                    editingRef.current = true;
+                    setText(e.target.value);
+                },
+                onBlur: commit,
+                onKeyDown: (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commit();
+                    }
+                },
+            });
+        }
+
         function SettingsForm({
             draft,
             onPatch,
@@ -6917,21 +7050,7 @@ window.__ModuleLoader__.load({
                     ],
                 });
             var numInput = (value, onChange, step, min, max) =>
-                h('input', {
-                    type: 'number',
-                    step: step || '1',
-                    ...(typeof min === 'number' ? { min: min } : {}),
-                    ...(typeof max === 'number' ? { max: max } : {}),
-                    className: 'wp-sf-input',
-                    value: value,
-                    onChange: (e) => {
-                        var next = parseFloat(e.target.value) || 0;
-                        // 清空输入会得到 NaN→0：先钳到合法范围，避免桌宠瞬时消失/保存必然失败
-                        if (typeof min === 'number' && next < min) next = min;
-                        if (typeof max === 'number' && next > max) next = max;
-                        onChange(next);
-                    },
-                });
+                h(NumInput, { value: value, onChange: onChange, step: step, min: min, max: max });
             var singleSelect = (value, options, onChange) =>
                 h('select', {
                     className: 'wp-sf-select',
@@ -7395,6 +7514,39 @@ window.__ModuleLoader__.load({
             });
         }
 
+        // 设置稀疏补丁：只取相对上次保存快照真正改变的顶层键（宿主 update 是深合并，
+        // 未提交的键保持磁盘现值）。避免把默认值/未改字段钉成用户覆盖层，也避免用旧
+        // draft 里的 posX/posY 覆盖期间拖拽产生的位置。base 为 null 表示首次保存。
+        var SETTINGS_PATCH_KEYS = [
+            'visible',
+            'bubbles',
+            'meter',
+            'fx',
+            'size',
+            'position',
+            'scope',
+            'posX',
+            'posY',
+            'calendar',
+            'balance',
+            'notify',
+            'behavior',
+            'intents',
+            'pools',
+            'rules',
+        ];
+        function diffConfigPatch(base, next) {
+            if (!next) return null;
+            var patch = {};
+            for (var i = 0; i < SETTINGS_PATCH_KEYS.length; i++) {
+                var key = SETTINGS_PATCH_KEYS[i];
+                var value = next[key];
+                if (value === undefined) continue;
+                if (!base || JSON.stringify(base[key]) !== JSON.stringify(value)) patch[key] = value;
+            }
+            return Object.keys(patch).length ? patch : null;
+        }
+
         function SettingsCard({ api, store, locale, customStore, ruleRuntime, bare = false }) {
             var [draft, setDraft] = useState(null); // 编辑中的配置（mergeConfig 合并）
             var [saving, setSaving] = useState(false);
@@ -7436,6 +7588,12 @@ window.__ModuleLoader__.load({
             var savedKeyRef = useRef(null);
             var saveInFlightRef = useRef(false);
             var queuedSaveRef = useRef(null);
+            // 命名空间 revision：并发写保护。0.2.2 的 update(ns, patch, expectedRevision)
+            // 在 revision 不符时返回 settings/conflict —— 另一个标签或宠物位置写入改过
+            // 配置时，重读后把本次改动并进最新配置再写，而不是静默覆盖别人的值。
+            var revisionRef = useRef(null);
+            var retryTimerRef = useRef(null);
+            var retryCountRef = useRef(0);
             // 离开配置页/页面隐藏时补交：防抖窗口内的修改不能丢（否则切走再回来"回到原样"）
             var draftRef = useRef(null);
             var persistRef = useRef(null);
@@ -7483,6 +7641,7 @@ window.__ModuleLoader__.load({
                         var loaded = mergeConfig(ns.value);
                         setDraft(loaded);
                         savedKeyRef.current = JSON.stringify(loaded);
+                        revisionRef.current = typeof ns.revision === 'number' ? ns.revision : null;
                         setError(null);
                         setLoadPhase('ready');
                     })
@@ -7501,11 +7660,48 @@ window.__ModuleLoader__.load({
                 if (draft && store && store.set) store.set(draft);
             }, [draft, store]);
 
+            // 只提交真正改变的顶层键（见 diffConfigPatch）。
+            var changedPatch = (nextDraft) =>
+                diffConfigPatch(savedKeyRef.current ? JSON.parse(savedKeyRef.current) : null, nextDraft);
+            var writePatch = (patch) =>
+                api.settings
+                    .update({
+                        ns: SETTINGS_NS,
+                        patch: patch,
+                        expectedRevision:
+                            typeof revisionRef.current === 'number' ? revisionRef.current : undefined,
+                    })
+                    .then((view) => {
+                        if (view && typeof view.revision === 'number') revisionRef.current = view.revision;
+                        return view;
+                    });
+            // 传输层可能不 settle（0.1.x RPC 分支/宿主卡死）：超时后释放串行锁，避免
+            // 后续所有保存永久排队在"正在保存"。
+            var withTimeout = (promise, ms) =>
+                new Promise((resolve, reject) => {
+                    var timer = setTimeout(() => reject(new Error('settings save timeout')), ms);
+                    promise.then(
+                        (value) => {
+                            clearTimeout(timer);
+                            resolve(value);
+                        },
+                        (error) => {
+                            clearTimeout(timer);
+                            reject(error);
+                        }
+                    );
+                });
+            var finishSave = () => {
+                saveInFlightRef.current = false;
+                var queued = queuedSaveRef.current;
+                queuedSaveRef.current = null;
+                if (queued && JSON.stringify(queued) !== savedKeyRef.current) persistDraft(queued);
+                else setSaving(false);
+            };
             // 防抖自动保存：请求串行执行；保存途中产生的新修改排队补交最新快照。
             var persistDraft = (nextDraft) => {
                 if (!nextDraft || !api || !api.settings) return;
-                var key = JSON.stringify(nextDraft);
-                if (key === savedKeyRef.current) return;
+                if (JSON.stringify(nextDraft) === savedKeyRef.current) return;
                 if (saveInFlightRef.current) {
                     queuedSaveRef.current = nextDraft;
                     return;
@@ -7513,45 +7709,66 @@ window.__ModuleLoader__.load({
                 saveInFlightRef.current = true;
                 setSaving(true);
                 setError(null);
-                api.settings
-                    .update({
-                        ns: SETTINGS_NS,
-                        patch: {
-                            visible: nextDraft.visible,
-                            bubbles: nextDraft.bubbles,
-                            meter: nextDraft.meter,
-                            fx: nextDraft.fx,
-                            size: nextDraft.size,
-                            position: nextDraft.position,
-                            scope: nextDraft.scope,
-                            // 位置与日历：必须一起写回，否则保存任意设置都会把
-                            // 拖拽落点/日历开关重置成默认值
-                            posX: typeof nextDraft.posX === 'number' ? nextDraft.posX : -1,
-                            posY: typeof nextDraft.posY === 'number' ? nextDraft.posY : -1,
-                            calendar: nextDraft.calendar || DEFAULT_CONFIG.calendar,
-                            balance: nextDraft.balance || DEFAULT_CONFIG.balance,
-                            notify: nextDraft.notify || DEFAULT_CONFIG.notify,
-                            behavior: nextDraft.behavior,
-                            intents: nextDraft.intents,
-                            pools: nextDraft.pools,
-                            rules: nextDraft.rules,
-                        },
-                    })
-                    .then(() => {
-                        savedKeyRef.current = key;
+                var scheduleRetry = () => {
+                    if (retryCountRef.current >= 3 || retryTimerRef.current) return;
+                    retryCountRef.current += 1;
+                    retryTimerRef.current = setTimeout(() => {
+                        retryTimerRef.current = null;
+                        persistDraft(draftRef.current);
+                    }, 1000 * retryCountRef.current);
+                };
+                var run = async (draftToWrite, conflictRetried) => {
+                    var patch = changedPatch(draftToWrite);
+                    if (!patch) {
+                        savedKeyRef.current = JSON.stringify(draftToWrite);
+                        return;
+                    }
+                    try {
+                        await withTimeout(writePatch(patch), 12000);
+                        savedKeyRef.current = JSON.stringify(draftToWrite);
+                        retryCountRef.current = 0;
                         setSavedAt(Date.now());
                         if (store) store.load();
+                    } catch (err) {
+                        if (err && err.code === 'settings/conflict' && !conflictRetried) {
+                            // 并发写冲突：重读最新配置，只把本次改过的键并进去再写一次。
+                            var res = await api.settings.describe({});
+                            var payload = res && res.result && res.result.ok ? res.result.value : null;
+                            var namespaces = (payload && payload.namespaces) || [];
+                            var ns = null;
+                            for (var i = 0; i < namespaces.length; i += 1) {
+                                if (namespaces[i].ns === SETTINGS_NS) ns = namespaces[i];
+                            }
+                            if (!ns) throw err;
+                            var fresh = mergeConfig(ns.value);
+                            var merged = Object.assign({}, fresh);
+                            var changed = Object.keys(patch || {});
+                            for (var j = 0; j < changed.length; j += 1)
+                                merged[changed[j]] = draftToWrite[changed[j]];
+                            revisionRef.current = typeof ns.revision === 'number' ? ns.revision : null;
+                            savedKeyRef.current = JSON.stringify(fresh);
+                            setDraft(merged);
+                            return run(merged, true);
+                        }
+                        throw err;
+                    }
+                };
+                run(nextDraft, false)
+                    .catch((err) => {
+                        setError({ key: 'saveFailed', detail: (err && err.message) || '?' });
+                        scheduleRetry();
                     })
-                    .catch((e) => setError({ key: 'saveFailed', detail: (e && e.message) || '?' }))
-                    .finally(() => {
-                        saveInFlightRef.current = false;
-                        var queued = queuedSaveRef.current;
-                        queuedSaveRef.current = null;
-                        if (queued && JSON.stringify(queued) !== savedKeyRef.current) persistDraft(queued);
-                        else setSaving(false);
-                    });
+                    .finally(finishSave);
             };
             persistRef.current = persistDraft;
+            // 卸载时清掉待重试计时器（组件已不在，重试没有意义）
+            useEffect(
+                () => () => {
+                    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+                    retryTimerRef.current = null;
+                },
+                []
+            );
             useEffect(() => {
                 if (!draft || savedKeyRef.current === null) return;
                 if (saveInFlightRef.current) {
@@ -7641,8 +7858,8 @@ window.__ModuleLoader__.load({
             if (connection?.api) return mount(ctx, config); // 0.1.0 旧版：api 直取
             const servicesReady = () => {
                 try {
-                    // uiSession 在 0.2.x 已不是客户端服务：只等 sessions/remote，
-                    // 否则 inject 永远不回调，1.5s 兜底拿到的是未注入的 ctx。
+                    // uiSession 在 0.2.2 仍提供客户侧服务；但启动顺序不保证，挂载时可能尚未就绪，
+                    // 因此只等 sessions/remote（其余服务用惰性 getter/软获取），1.5s 兜底再挂载。
                     return !!(ctx.get('sessions') && ctx.get('remote'));
                 } catch (e) {
                     return false;
@@ -7696,20 +7913,16 @@ window.__ModuleLoader__.load({
                     remoteSvc = undefined;
                 }
             }
-            var remoteSession = undefined;
-            // 0.2.0 最稳的取法：按服务名 ctx.get('remote.session')，不碰 inject 守卫。
-            try {
-                remoteSession = ctx.get('remote.session');
-            } catch (e) {
-                remoteSession = undefined;
-            }
-            if (!remoteSession && remoteSvc) {
+            // 0.2.2：remote.session / uiSession 都可能晚于挂载就绪，一次性快照会让事件流
+            // 订阅与当前会话在整页生命周期内缺失。改为惰性取值函数（见 host-api.js）。
+            var readRemoteSession = createRemoteSessionGetter(ctx, remoteSvc);
+            var readUiSession = () => {
                 try {
-                    remoteSession = remoteSvc.session;
+                    return ctx.get('uiSession');
                 } catch (e) {
-                    remoteSession = undefined;
+                    return undefined;
                 }
-            }
+            };
             // remote.account 只做软获取：未安装账户插件/非 owner 时不能阻塞挂载。
             var remoteAccount = undefined;
             try {
@@ -7737,16 +7950,15 @@ window.__ModuleLoader__.load({
                     modelDirectories,
                     sessions: ctx.get('sessions'),
                     remote: remoteSvc,
-                    remoteSession,
+                    remoteSession: readRemoteSession(),
                     remoteAccount,
-                    uiSession: ctx.get('uiSession'),
-                    getSettings: () => {
-                        try {
-                            return remoteSvc ? remoteSvc.settings : ctx.get('remote.settings');
-                        } catch (e) {
-                            return undefined;
-                        }
-                    },
+                    uiSession: readUiSession(),
+                    getRemoteSession: readRemoteSession,
+                    getUiSession: readUiSession,
+                    // 0.2.2 起 remote 的子命名空间是 traced service：属性访问要过 inject
+                    // 守卫（客户端半侧只注入 slots），必须用不需要注入的服务名读取，
+                    // 否则设置面板会等满超时后报「无法读取设置」。
+                    getSettings: createSettingsGetter(ctx, remoteSvc),
                 });
             } catch (e) {
                 console.error('[whale-pet] resolveHostApi failed:', e);
@@ -7893,7 +8105,8 @@ window.__ModuleLoader__.load({
                         })
                 );
             });
-            // 槽位 2a：0.1.x 官方"设置 → 插件"卡片（key = 设置命名空间）
+            // 槽位 2a：0.1.x 官方"设置 → 插件"卡片（key = 设置命名空间）。
+            // 0.2.x 已无该槽位：注册在 0.2.2 上不会触发（保留仅为兼容 0.1.x 宿主）。
             ctx.slots.inject('settings.plugin.item', function* () {
                 yield ctx.slots.register(
                     {
@@ -7949,6 +8162,7 @@ window.__ModuleLoader__.load({
             ACTIVITY_PRESETS,
             LEGACY_QUIET_BEHAVIOR,
             mergeConfig,
+            diffConfigPatch,
             createConfigStore,
             INTENT_CFG_KEY,
             SETTINGS_NS,
